@@ -1,0 +1,268 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: job_platform_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jobplatform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobplatform_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-job_platform}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jobplatform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - job_platform_network
+
+  # Redis Cache and Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: job_platform_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - job_platform_network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job_platform_backend
+    environment:
+      # Application
+      APP_NAME: "Job Aggregation Platform"
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-True}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      
+      # API Configuration
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_RELOAD: ${API_RELOAD:-True}
+      
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-jobplatform}:${POSTGRES_PASSWORD:-jobplatform_dev}@postgres:5432/${POSTGRES_DB:-job_platform}
+      DATABASE_POOL_SIZE: 5
+      DATABASE_MAX_OVERFLOW: 20
+      
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      REDIS_CACHE_DB: 1
+      
+      # Celery
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      
+      # JWT Authentication
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 15
+      JWT_REFRESH_TOKEN_EXPIRE_DAYS: 7
+      
+      # External API Keys
+      INDEED_API_KEY: ${INDEED_API_KEY:-}
+      LINKEDIN_RSS_URLS: ${LINKEDIN_RSS_URLS:-}
+      
+      # Stripe Payment
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      
+      # Scraping Configuration
+      SCRAPING_USER_AGENT: "Mozilla/5.0 (compatible; JobBot/1.0)"
+      SCRAPING_RATE_LIMIT_LINKEDIN: 10
+      SCRAPING_RATE_LIMIT_INDEED: 20
+      SCRAPING_RATE_LIMIT_NAUKRI: 5
+      SCRAPING_RATE_LIMIT_MONSTER: 5
+      
+      # File Storage
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_PATH: ./uploads
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_KEY: ${SUPABASE_KEY:-}
+      
+      # Monitoring
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      
+      # Alerting
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      FROM_EMAIL: ${FROM_EMAIL:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - job_platform_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery Worker
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job_platform_celery_worker
+    environment:
+      # Application
+      APP_NAME: "Job Aggregation Platform"
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-True}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-jobplatform}:${POSTGRES_PASSWORD:-jobplatform_dev}@postgres:5432/${POSTGRES_DB:-job_platform}
+      DATABASE_POOL_SIZE: 5
+      DATABASE_MAX_OVERFLOW: 20
+      
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      REDIS_CACHE_DB: 1
+      
+      # Celery
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      
+      # JWT Authentication
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      
+      # External API Keys
+      INDEED_API_KEY: ${INDEED_API_KEY:-}
+      LINKEDIN_RSS_URLS: ${LINKEDIN_RSS_URLS:-}
+      
+      # Scraping Configuration
+      SCRAPING_USER_AGENT: "Mozilla/5.0 (compatible; JobBot/1.0)"
+      SCRAPING_RATE_LIMIT_LINKEDIN: 10
+      SCRAPING_RATE_LIMIT_INDEED: 20
+      SCRAPING_RATE_LIMIT_NAUKRI: 5
+      SCRAPING_RATE_LIMIT_MONSTER: 5
+      
+      # Monitoring
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      
+      # Alerting
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      FROM_EMAIL: ${FROM_EMAIL:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - job_platform_network
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4
+
+  # Celery Beat Scheduler
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job_platform_celery_beat
+    environment:
+      # Application
+      APP_NAME: "Job Aggregation Platform"
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-True}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-jobplatform}:${POSTGRES_PASSWORD:-jobplatform_dev}@postgres:5432/${POSTGRES_DB:-job_platform}
+      DATABASE_POOL_SIZE: 5
+      DATABASE_MAX_OVERFLOW: 20
+      
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      REDIS_CACHE_DB: 1
+      
+      # Celery
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      
+      # JWT Authentication
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: json
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - job_platform_network
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+
+  # Celery Flower (Monitoring)
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job_platform_flower
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    depends_on:
+      - redis
+      - celery_worker
+    networks:
+      - job_platform_network
+    command: celery -A app.tasks.celery_app flower --port=5555
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  job_platform_network:
+    driver: bridge
