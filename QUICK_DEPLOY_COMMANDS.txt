@@ -1,0 +1,21 @@
+# Copy and paste these commands on EC2:
+# Replace YOUR_GITHUB_PAT with your actual GitHub Personal Access Token
+
+# 1. Pull latest code (if directory exists)
+cd /home/jobplatform/job-platform && git pull
+
+# OR clone fresh (if directory doesn't exist)
+cd /home/jobplatform && git clone https://YOUR_GITHUB_PAT@github.com/Sourabh1118/TenOpps.git job-platform
+
+# 2. Fix migrations
+cd /home/jobplatform/job-platform
+chmod +x scripts/fix-all-migrations.sh
+sudo -u jobplatform bash scripts/fix-all-migrations.sh
+
+# 3. Run deployment
+sudo bash scripts/complete-clean-deploy.sh trusanity.com YOUR_GITHUB_PAT Herculis@123 Herculis@123
+
+# 4. After deployment, configure SSL
+sudo certbot --nginx -d trusanity.com
+
+# Done! Visit https://trusanity.com

@@ -247,6 +247,10 @@ EOF
 echo "Installing Node.js dependencies..."
 sudo -u jobplatform npm install
 
+# Install tailwindcss-animate (required for build)
+echo "Installing tailwindcss-animate..."
+sudo -u jobplatform npm install tailwindcss-animate
+
 # Build frontend
 echo "Building frontend..."
 sudo -u jobplatform npm run build

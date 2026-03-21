@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tantml:invoke>
-<invoke name="jobsApi } from '@/lib/api/jobs'
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { jobsApi } from "@/lib/api/jobs"
 import { useRouter, useParams } from 'next/navigation'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import { JobPostingForm, JobFormData } from '@/components/employer/JobPostingForm'
