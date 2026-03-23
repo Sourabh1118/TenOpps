@@ -50,12 +50,16 @@ def create_admin_user(
         salt = bcrypt.gensalt(rounds=12)
         hashed_pw = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
         
+        # Get subscription tier value
+        tier_value = SubscriptionTier.PREMIUM.value
+        print(f"DEBUG: Using subscription_tier value: {tier_value!r}")
+        
         admin_user = Employer(
             email=email,
             password_hash=hashed_pw,
             company_name=company_name,
             company_description="Platform Administrator Account",
-            subscription_tier=SubscriptionTier.PREMIUM.value,  # Use enum value string
+            subscription_tier=tier_value,  # Use enum value string
             subscription_start_date=datetime.utcnow(),
             subscription_end_date=datetime.utcnow() + timedelta(days=3650),  # 10 years
             verified=True,
