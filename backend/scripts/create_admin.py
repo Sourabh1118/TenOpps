@@ -55,7 +55,7 @@ def create_admin_user(
             password_hash=hashed_pw,
             company_name=company_name,
             company_description="Platform Administrator Account",
-            subscription_tier=SubscriptionTier.PREMIUM,  # Use enum value
+            subscription_tier=SubscriptionTier.PREMIUM.value,  # Use enum value string
             subscription_start_date=datetime.utcnow(),
             subscription_end_date=datetime.utcnow() + timedelta(days=3650),  # 10 years
             verified=True,
