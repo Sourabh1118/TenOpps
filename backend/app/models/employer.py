@@ -55,7 +55,7 @@ class Employer(Base):
 
     # Subscription management
     subscription_tier = Column(
-        Enum(SubscriptionTier),
+        Enum(SubscriptionTier, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=SubscriptionTier.FREE,
         index=True
