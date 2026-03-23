@@ -1,0 +1,22 @@
+# Run these commands to fix the styling on EC2
+
+# Option 1: Use the automated script
+chmod +x fix-frontend-styling.sh
+./fix-frontend-styling.sh
+
+# Option 2: Manual commands (SSH into EC2 first)
+ssh -i trusanity-pem.pem ubuntu@3.110.220.37
+
+# Then run these on EC2:
+cd /home/jobplatform/job-platform/frontend
+sudo -u jobplatform git pull
+sudo -u jobplatform npm install tailwindcss-animate
+sudo -u jobplatform rm -rf .next
+sudo -u jobplatform npm run build
+sudo -u jobplatform pm2 restart job-platform-frontend
+sudo systemctl restart nginx
+
+# Check if it's working:
+curl -I http://localhost:3000
+
+# Exit and visit: http://trusanity.com

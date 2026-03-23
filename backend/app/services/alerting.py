@@ -370,3 +370,55 @@ async def reset_scraping_failures(source_platform: str) -> None:
         logger.info(f"Reset scraping failure count for {source_platform}")
     except Exception as e:
         logger.error(f"Failed to reset scraping failures: {e}", exc_info=e)
+
+
+def send_alert(subject: str, message: str, severity: str = "info") -> bool:
+    """
+    Synchronous wrapper for sending alerts.
+    
+    Args:
+        subject: Alert subject
+        message: Alert message
+        severity: Alert severity (info, warning, critical)
+        
+    Returns:
+        True if alert was sent successfully, False otherwise
+    """
+    import asyncio
+    
+    async def _run():
+        if severity == "critical":
+            return await alerting_service.send_critical_error_alert(
+                error_message=message,
+                error_type="System Alert",
+            )
+        
+        body = f"""
+System Alert ({severity.upper()})
+
+Time: {datetime.utcnow().isoformat()}Z
+Environment: {settings.APP_ENV}
+Subject: {subject}
+
+Message:
+{message}
+"""
+        return await alerting_service._send_alert(subject, body)
+
+    try:
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        if loop.is_running():
+            # If the loop is already running, we have to create a new one to run until complete
+            # or use the existing one if we can. But in sync Celery, this shouldn't happen.
+            return asyncio.run(_run())
+        else:
+            return loop.run_until_complete(_run())
+    except Exception as e:
+        logger.error(f"Failed to send alert synchronously: {e}")
+        return False
+
