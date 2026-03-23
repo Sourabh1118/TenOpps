@@ -14,8 +14,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = '009_add_performance_indexes'
-down_revision = '008_create_consents_table'
+revision = '010'
+down_revision = '009'
 branch_labels = None
 depends_on = None
 
