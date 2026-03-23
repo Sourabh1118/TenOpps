@@ -20,6 +20,9 @@ from app.models.application import (
 from app.models.job_source import (
     JobSource,
 )
+from app.models.admin import (
+    Admin,
+)
 from app.models.scraping_task import (
     ScrapingTask,
     TaskType,
@@ -38,6 +41,7 @@ __all__ = [
     "Application",
     "ApplicationStatus",
     "JobSource",
+    "Admin",
     "ScrapingTask",
     "TaskType",
     "TaskStatus",

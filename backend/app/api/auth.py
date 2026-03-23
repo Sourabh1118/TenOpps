@@ -23,6 +23,7 @@ from app.core.security import (
 from app.db.session import get_db
 from app.models.employer import Employer, SubscriptionTier
 from app.models.job_seeker import JobSeeker
+from app.models.admin import Admin
 from app.schemas.auth import (
     AccessTokenResponse,
     TokenData,
@@ -478,6 +479,31 @@ async def login(
             return LoginResponse(
                 user_id=str(job_seeker.id),
                 role="job_seeker",
+                access_token=access_token,
+                refresh_token=refresh_token,
+                token_type="bearer"
+            )
+    
+    # Search for user in Admin table
+    admin_user = db.query(Admin).filter(Admin.email == login_data.email).first()
+    
+    if admin_user:
+        # Verify password
+        if verify_password(login_data.password, admin_user.password_hash):
+            # Generate JWT tokens
+            access_token = create_access_token({
+                "sub": str(admin_user.id),
+                "role": "admin"
+            })
+            
+            refresh_token = create_refresh_token({
+                "sub": str(admin_user.id),
+                "role": "admin"
+            })
+            
+            return LoginResponse(
+                user_id=str(admin_user.id),
+                role="admin",
                 access_token=access_token,
                 refresh_token=refresh_token,
                 token_type="bearer"
