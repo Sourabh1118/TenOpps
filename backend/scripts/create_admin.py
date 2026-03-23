@@ -7,6 +7,7 @@ Run this script on the server after deployment.
 """
 import sys
 import os
+import bcrypt
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -16,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.employer import Employer, SubscriptionTier
-from app.core.security import hash_password
 
 
 def create_admin_user(
@@ -45,13 +45,10 @@ def create_admin_user(
             return False
         
         # Create admin user
-        # Hash password with explicit truncation for bcrypt's 72 byte limit
+        # Hash password directly with bcrypt to avoid passlib issues
         password_bytes = password.encode('utf-8')
-        if len(password_bytes) > 72:
-            password_bytes = password_bytes[:72]
-            password = password_bytes.decode('utf-8')
-            
-        hashed_pw = hash_password(password)
+        salt = bcrypt.gensalt(rounds=12)
+        hashed_pw = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
         
         admin_user = Employer(
             email=email,
