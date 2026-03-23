@@ -27,7 +27,6 @@ def upgrade() -> None:
         name='tasktype',
         create_type=True
     )
-    task_type_enum.create(op.get_bind())
     
     # Create task_status enum
     task_status_enum = postgresql.ENUM(
@@ -38,7 +37,6 @@ def upgrade() -> None:
         name='taskstatus',
         create_type=True
     )
-    task_status_enum.create(op.get_bind())
     
     # Create scraping_tasks table
     op.create_table(
