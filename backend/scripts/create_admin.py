@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.employer import Employer, SubscriptionTier
-from app.core.security import get_password_hash
+from app.core.security import hash_password
 
 
 def create_admin_user(
@@ -47,7 +47,7 @@ def create_admin_user(
         # Create admin user
         admin_user = Employer(
             email=email,
-            password_hash=get_password_hash(password),
+            password_hash=hash_password(password),
             company_name=company_name,
             company_description="Platform Administrator Account",
             subscription_tier=SubscriptionTier.PREMIUM,
