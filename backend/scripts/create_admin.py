@@ -45,13 +45,17 @@ def create_admin_user(
             return False
         
         # Create admin user
-        # Ensure password is within bcrypt's 72 byte limit
-        if len(password.encode('utf-8')) > 72:
-            password = password[:72]
+        # Hash password with explicit truncation for bcrypt's 72 byte limit
+        password_bytes = password.encode('utf-8')
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+            password = password_bytes.decode('utf-8')
             
+        hashed_pw = hash_password(password)
+        
         admin_user = Employer(
             email=email,
-            password_hash=hash_password(password),
+            password_hash=hashed_pw,
             company_name=company_name,
             company_description="Platform Administrator Account",
             subscription_tier=SubscriptionTier.PREMIUM,
@@ -115,6 +119,7 @@ def main():
         company_name = "TruSanity Admin"
     
     print(f"Creating admin user: {email}")
+    print(f"Password length: {len(password)} characters, {len(password.encode('utf-8'))} bytes")
     print("")
     
     success = create_admin_user(email, password, company_name)
