@@ -45,6 +45,10 @@ def create_admin_user(
             return False
         
         # Create admin user
+        # Ensure password is within bcrypt's 72 byte limit
+        if len(password.encode('utf-8')) > 72:
+            password = password[:72]
+            
         admin_user = Employer(
             email=email,
             password_hash=hash_password(password),
