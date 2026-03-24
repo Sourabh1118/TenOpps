@@ -2,13 +2,14 @@
 """
 Create an admin user for the job platform.
 
-This script creates an employer account with admin privileges.
+This script creates a proper admin account in the admins table.
+Admin users have platform-wide control and are separate from employers.
 Run this script on the server after deployment.
 """
 import sys
 import os
 import bcrypt
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 # Add parent directory to path
@@ -16,32 +17,35 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
-from app.models.employer import Employer, SubscriptionTier
+from app.models.admin import Admin
 
 
 def create_admin_user(
     email: str = "admin@trusanity.com",
     password: str = "Admin@123",
-    company_name: str = "TruSanity Admin"
+    full_name: str = "Platform Administrator"
 ):
     """
-    Create an admin user with premium subscription.
+    Create an admin user in the admins table.
+    
+    Admin users are platform owners with full control over the system.
+    They are separate from employers (companies who post jobs).
     
     Args:
         email: Admin email address
         password: Admin password
-        company_name: Company name for admin account
+        full_name: Full name of the administrator
     """
     db: Session = SessionLocal()
     
     try:
         # Check if admin already exists
-        existing_admin = db.query(Employer).filter(Employer.email == email).first()
+        existing_admin = db.query(Admin).filter(Admin.email == email).first()
         if existing_admin:
             print(f"❌ Admin user with email {email} already exists!")
             print(f"   User ID: {existing_admin.id}")
-            print(f"   Company: {existing_admin.company_name}")
-            print(f"   Subscription: {existing_admin.subscription_tier}")
+            print(f"   Full Name: {existing_admin.full_name}")
+            print(f"   Created: {existing_admin.created_at}")
             return False
         
         # Create admin user
@@ -50,22 +54,10 @@ def create_admin_user(
         salt = bcrypt.gensalt(rounds=12)
         hashed_pw = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
         
-        # Get subscription tier value
-        tier_value = SubscriptionTier.PREMIUM.value
-        print(f"DEBUG: Using subscription_tier value: {tier_value!r}")
-        
-        admin_user = Employer(
+        admin_user = Admin(
             email=email,
             password_hash=hashed_pw,
-            company_name=company_name,
-            company_description="Platform Administrator Account",
-            subscription_tier=tier_value,  # Use enum value string
-            subscription_start_date=datetime.utcnow(),
-            subscription_end_date=datetime.utcnow() + timedelta(days=3650),  # 10 years
-            verified=True,
-            monthly_posts_used=0,
-            featured_posts_used=0,
-            url_imports_used=0
+            full_name=full_name
         )
         
         db.add(admin_user)
@@ -80,14 +72,14 @@ def create_admin_user(
         print(f"Email:        {email}")
         print(f"Password:     {password}")
         print(f"User ID:      {admin_user.id}")
-        print(f"Company:      {admin_user.company_name}")
-        print(f"Subscription: {admin_user.subscription_tier}")
-        print(f"Verified:     {admin_user.verified}")
+        print(f"Full Name:    {admin_user.full_name}")
+        print(f"Role:         admin (platform owner)")
+        print(f"Created:      {admin_user.created_at}")
         print("=" * 60)
         print("")
         print("⚠️  IMPORTANT: Change the password after first login!")
         print("")
-        print("Login at: http://trusanity.com/login")
+        print("Login at: https://trusanity.com/login")
         print("")
         
         return True
@@ -105,25 +97,28 @@ def main():
     """Main function to create admin user."""
     print("")
     print("=" * 60)
-    print("CREATE ADMIN USER")
+    print("CREATE ADMIN USER (PLATFORM OWNER)")
     print("=" * 60)
+    print("")
+    print("Admin users have full platform control and are separate from employers.")
     print("")
     
     # Get custom credentials if provided
     if len(sys.argv) > 1:
         email = sys.argv[1]
         password = sys.argv[2] if len(sys.argv) > 2 else "Admin@123"
-        company_name = sys.argv[3] if len(sys.argv) > 3 else "TruSanity Admin"
+        full_name = sys.argv[3] if len(sys.argv) > 3 else "Platform Administrator"
     else:
         email = "admin@trusanity.com"
         password = "Admin@123"
-        company_name = "TruSanity Admin"
+        full_name = "Platform Administrator"
     
     print(f"Creating admin user: {email}")
-    print(f"Password length: {len(password)} characters, {len(password.encode('utf-8'))} bytes")
+    print(f"Full name: {full_name}")
+    print(f"Password length: {len(password)} characters")
     print("")
     
-    success = create_admin_user(email, password, company_name)
+    success = create_admin_user(email, password, full_name)
     
     if success:
         sys.exit(0)

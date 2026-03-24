@@ -1,62 +1,134 @@
-import apiClient from '@/lib/api-client'
+/**
+ * Admin API Client
+ * 
+ * API functions for admin operations including:
+ * - Platform statistics
+ * - User management
+ * - Rate limit monitoring
+ * - System health
+ */
+
+import { apiClient } from './api-client'
+
+// Types
+export interface PlatformStats {
+  total_users: number
+  total_employers: number
+  total_job_seekers: number
+  total_jobs: number
+  total_applications: number
+  active_jobs: number
+  jobs_posted_today: number
+  applications_today: number
+}
+
+export interface UserListItem {
+  id: string
+  email: string
+  role: 'admin' | 'employer' | 'job_seeker'
+  created_at: string
+  full_name?: string
+  company_name?: string
+}
 
 export interface RateLimitViolation {
   timestamp: string
-  endpoint: string
+  user_id: string
+  path: string
   count: number
-}
-
-export interface RateLimitViolationsResponse {
-  user_id: string
-  violations: RateLimitViolation[]
-  total_violations: number
-}
-
-export interface Violator {
-  user_id: string
-  total_violations: number
-  last_violation: string
-}
-
-export interface ViolatorsResponse {
-  violators: Violator[]
-  total: number
+  limit: number
 }
 
 export interface RateLimitStats {
-  total_requests: number
-  total_violations: number
-  violation_rate: number
-  top_endpoints: Array<{
-    endpoint: string
-    violations: number
+  total_violators: number
+  time_window_hours: number
+  top_violators: Array<{
+    user_id: string
+    violation_count: number
   }>
 }
 
-export const adminApi = {
-  // Get rate limit violations for a user
-  getRateLimitViolations: async (userId: string): Promise<RateLimitViolationsResponse> => {
-    const response = await apiClient.get<RateLimitViolationsResponse>(`/admin/rate-limit/violations/${userId}`)
-    return response.data
-  },
+/**
+ * Get platform statistics
+ */
+export async function getPlatformStats(): Promise<PlatformStats> {
+  const response = await apiClient.get('/admin/stats')
+  return response.data
+}
 
-  // Get top rate limit violators
-  getRateLimitViolators: async (limit: number = 10): Promise<ViolatorsResponse> => {
-    const response = await apiClient.get<ViolatorsResponse>('/admin/rate-limit/violators', {
-      params: { limit },
-    })
-    return response.data
-  },
+/**
+ * Get all users (paginated)
+ */
+export async function getUsers(params?: {
+  role?: 'admin' | 'employer' | 'job_seeker'
+  page?: number
+  limit?: number
+}): Promise<{ users: UserListItem[]; total: number }> {
+  const response = await apiClient.get('/admin/users', { params })
+  return response.data
+}
 
-  // Get rate limit statistics
-  getRateLimitStats: async (): Promise<RateLimitStats> => {
-    const response = await apiClient.get<RateLimitStats>('/admin/rate-limit/stats')
-    return response.data
-  },
+/**
+ * Get rate limit violations for a user
+ */
+export async function getUserViolations(
+  userId: string,
+  limit: number = 100
+): Promise<{ user_id: string; violations: RateLimitViolation[]; total_count: number }> {
+  const response = await apiClient.get(`/admin/rate-limit/violations/${userId}`, {
+    params: { limit }
+  })
+  return response.data
+}
 
-  // Clear rate limit violations for a user
-  clearRateLimitViolations: async (userId: string): Promise<{ message: string }> => {
-    const response = await apiClient.delete<{ message: string }>(`/admin/rate-limit/violations/${userId}`)
-    return response.data
-  },
+/**
+ * Get list of users with rate limit violations
+ */
+export async function getViolators(
+  hours: number = 24
+): Promise<{ violators: string[]; total_count: number; time_window_hours: number }> {
+  const response = await apiClient.get('/admin/rate-limit/violators', {
+    params: { hours }
+  })
+  return response.data
+}
+
+/**
+ * Get rate limit statistics
+ */
+export async function getRateLimitStats(
+  hours: number = 24,
+  topN: number = 10
+): Promise<RateLimitStats> {
+  const response = await apiClient.get('/admin/rate-limit/stats', {
+    params: { hours, top_n: topN }
+  })
+  return response.data
+}
+
+/**
+ * Clear rate limit violations for a user
+ */
+export async function clearUserViolations(userId: string): Promise<{ message: string }> {
+  const response = await apiClient.delete(`/admin/rate-limit/violations/${userId}`)
+  return response.data
+}
+
+/**
+ * Delete a user (admin only)
+ */
+export async function deleteUser(userId: string): Promise<{ message: string }> {
+  const response = await apiClient.delete(`/admin/users/${userId}`)
+  return response.data
+}
+
+/**
+ * Update user status (ban/unban)
+ */
+export async function updateUserStatus(
+  userId: string,
+  status: 'active' | 'banned'
+): Promise<{ message: string }> {
+  const response = await apiClient.patch(`/admin/users/${userId}/status`, { status })
+  return response.data
 }

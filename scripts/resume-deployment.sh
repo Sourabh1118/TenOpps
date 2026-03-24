@@ -1,4 +1,4 @@
-#!/bin/bash
+ #!/bin/bash
 ################################################################################
 # Resume Deployment Script
 # Continues deployment from where it failed

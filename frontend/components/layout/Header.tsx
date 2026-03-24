@@ -37,6 +37,19 @@ export function Header() {
             
             {isAuthenticated ? (
               <>
+                {user?.role === 'admin' && (
+                  <>
+                    <Link href="/admin/dashboard" className="hover:text-blue-600 transition-colors">
+                      Admin Dashboard
+                    </Link>
+                    <Link href="/admin/users" className="hover:text-blue-600 transition-colors">
+                      Users
+                    </Link>
+                    <Link href="/admin/jobs" className="hover:text-blue-600 transition-colors">
+                      Jobs
+                    </Link>
+                  </>
+                )}
                 {user?.role === 'employer' && (
                   <>
                     <Link href="/employer/post-job" className="hover:text-blue-600 transition-colors">
@@ -113,6 +126,31 @@ export function Header() {
               
               {isAuthenticated ? (
                 <>
+                  {user?.role === 'admin' && (
+                    <>
+                      <Link 
+                        href="/admin/dashboard" 
+                        className="hover:text-blue-600 transition-colors"
+                        onClick={closeMobileMenu}
+                      >
+                        Admin Dashboard
+                      </Link>
+                      <Link 
+                        href="/admin/users" 
+                        className="hover:text-blue-600 transition-colors"
+                        onClick={closeMobileMenu}
+                      >
+                        Users
+                      </Link>
+                      <Link 
+                        href="/admin/jobs" 
+                        className="hover:text-blue-600 transition-colors"
+                        onClick={closeMobileMenu}
+                      >
+                        Jobs
+                      </Link>
+                    </>
+                  )}
                   {user?.role === 'employer' && (
                     <>
                       <Link 

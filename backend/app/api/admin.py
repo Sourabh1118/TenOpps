@@ -5,11 +5,14 @@ This module provides admin-only endpoints for:
 - Rate limit violation monitoring
 - System health checks
 - User management
+- Platform statistics
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.api.dependencies import get_current_admin
 from app.schemas.auth import TokenData
@@ -19,6 +22,12 @@ from app.core.rate_limiting import (
     get_all_violators,
 )
 from app.core.logging import logger
+from app.db.session import get_db
+from app.models.admin import Admin
+from app.models.employer import Employer
+from app.models.job_seeker import JobSeeker
+from app.models.job import Job
+from app.models.application import Application
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -258,4 +267,205 @@ async def clear_user_violations(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to clear rate limit violations"
+        )
+
+
+
+class PlatformStatsResponse(BaseModel):
+    """Response for platform statistics."""
+    total_users: int
+    total_employers: int
+    total_job_seekers: int
+    total_jobs: int
+    total_applications: int
+    active_jobs: int
+    jobs_posted_today: int
+    applications_today: int
+
+
+class UserListItem(BaseModel):
+    """User list item."""
+    id: str
+    email: str
+    role: str
+    created_at: datetime
+    full_name: Optional[str] = None
+    company_name: Optional[str] = None
+
+
+class UsersListResponse(BaseModel):
+    """Response for users list."""
+    users: List[UserListItem]
+    total: int
+    page: int
+    limit: int
+
+
+@router.get(
+    "/stats",
+    response_model=PlatformStatsResponse,
+    summary="Get platform statistics"
+)
+async def get_platform_stats(
+    admin: TokenData = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Get platform-wide statistics.
+    
+    Returns aggregate statistics about users, jobs, and applications
+    across the entire platform.
+    
+    Args:
+        admin: Admin user from authentication
+        db: Database session
+        
+    Returns:
+        Platform statistics including user counts, job counts, and activity metrics
+    """
+    try:
+        # Count users
+        total_employers = db.query(func.count(Employer.id)).scalar() or 0
+        total_job_seekers = db.query(func.count(JobSeeker.id)).scalar() or 0
+        total_admins = db.query(func.count(Admin.id)).scalar() or 0
+        total_users = total_employers + total_job_seekers + total_admins
+        
+        # Count jobs
+        total_jobs = db.query(func.count(Job.id)).scalar() or 0
+        active_jobs = db.query(func.count(Job.id)).filter(
+            Job.status == 'active'
+        ).scalar() or 0
+        
+        # Count jobs posted today
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        jobs_posted_today = db.query(func.count(Job.id)).filter(
+            Job.created_at >= today_start
+        ).scalar() or 0
+        
+        # Count applications
+        total_applications = db.query(func.count(Application.id)).scalar() or 0
+        applications_today = db.query(func.count(Application.id)).filter(
+            Application.created_at >= today_start
+        ).scalar() or 0
+        
+        logger.info(f"Admin {admin.user_id} retrieved platform statistics")
+        
+        return PlatformStatsResponse(
+            total_users=total_users,
+            total_employers=total_employers,
+            total_job_seekers=total_job_seekers,
+            total_jobs=total_jobs,
+            total_applications=total_applications,
+            active_jobs=active_jobs,
+            jobs_posted_today=jobs_posted_today,
+            applications_today=applications_today
+        )
+        
+    except Exception as e:
+        logger.error(f"Error retrieving platform stats: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve platform statistics"
+        )
+
+
+@router.get(
+    "/users",
+    response_model=UsersListResponse,
+    summary="Get all users"
+)
+async def get_users(
+    role: Optional[str] = Query(None, description="Filter by role: admin, employer, job_seeker"),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    admin: TokenData = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Get list of all users with pagination and filtering.
+    
+    Args:
+        role: Optional role filter (admin, employer, job_seeker)
+        page: Page number (default: 1)
+        limit: Items per page (default: 50, max: 100)
+        admin: Admin user from authentication
+        db: Database session
+        
+    Returns:
+        Paginated list of users with their basic information
+    """
+    try:
+        users = []
+        offset = (page - 1) * limit
+        
+        # Get admins
+        if not role or role == 'admin':
+            admins = db.query(Admin).offset(offset if not role else 0).limit(limit if not role else None).all()
+            for a in admins:
+                users.append(UserListItem(
+                    id=str(a.id),
+                    email=a.email,
+                    role='admin',
+                    created_at=a.created_at,
+                    full_name=a.full_name
+                ))
+        
+        # Get employers
+        if not role or role == 'employer':
+            employers = db.query(Employer).offset(offset if not role else 0).limit(limit if not role else None).all()
+            for e in employers:
+                users.append(UserListItem(
+                    id=str(e.id),
+                    email=e.email,
+                    role='employer',
+                    created_at=e.created_at,
+                    company_name=e.company_name
+                ))
+        
+        # Get job seekers
+        if not role or role == 'job_seeker':
+            job_seekers = db.query(JobSeeker).offset(offset if not role else 0).limit(limit if not role else None).all()
+            for js in job_seekers:
+                users.append(UserListItem(
+                    id=str(js.id),
+                    email=js.email,
+                    role='job_seeker',
+                    created_at=js.created_at,
+                    full_name=js.full_name
+                ))
+        
+        # Sort by created_at descending
+        users.sort(key=lambda x: x.created_at, reverse=True)
+        
+        # Apply pagination if no role filter
+        if not role:
+            users = users[offset:offset + limit]
+        
+        # Count total
+        total = 0
+        if not role:
+            total = (db.query(func.count(Admin.id)).scalar() or 0) + \
+                    (db.query(func.count(Employer.id)).scalar() or 0) + \
+                    (db.query(func.count(JobSeeker.id)).scalar() or 0)
+        elif role == 'admin':
+            total = db.query(func.count(Admin.id)).scalar() or 0
+        elif role == 'employer':
+            total = db.query(func.count(Employer.id)).scalar() or 0
+        elif role == 'job_seeker':
+            total = db.query(func.count(JobSeeker.id)).scalar() or 0
+        
+        logger.info(f"Admin {admin.user_id} retrieved users list (role={role}, page={page})")
+        
+        return UsersListResponse(
+            users=users,
+            total=total,
+            page=page,
+            limit=limit
+        )
+        
+    except Exception as e:
+        logger.error(f"Error retrieving users list: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve users list"
         )

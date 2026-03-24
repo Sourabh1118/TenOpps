@@ -62,7 +62,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
     
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        # Use bcrypt directly to avoid passlib compatibility issues with bcrypt 5.0+
+        import bcrypt
+        password_bytes = plain_password.encode('utf-8')
+        hash_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hash_bytes)
     except Exception:
         # Handle any verification errors (malformed hash, etc.)
         return False
