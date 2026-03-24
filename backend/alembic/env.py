@@ -19,7 +19,8 @@ from app.models import Job, Employer, Application, JobSource
 config = context.config
 
 # Override sqlalchemy.url with our DATABASE_URL from settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Use replace to escape % for ConfigParser (% -> %%)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -62,9 +63,10 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    # Use DATABASE_URL directly to avoid ConfigParser interpolation issues
+    from sqlalchemy import create_engine
+    connectable = create_engine(
+        settings.DATABASE_URL,
         poolclass=pool.NullPool,
     )
 
