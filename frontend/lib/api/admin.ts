@@ -132,3 +132,90 @@ export async function updateUserStatus(
   const response = await apiClient.patch(`/admin/users/${userId}/status`, { status })
   return response.data
 }
+
+// ─────────────────────────────────────
+// Jobs Management
+// ─────────────────────────────────────
+
+export interface AdminJobItem {
+  id: string
+  title: string
+  company: string
+  location: string
+  status: string
+  source_platform: string | null
+  source_type: string
+  posted_at: string | null
+  created_at: string
+  application_count: number
+  view_count: number
+}
+
+/**
+ * Get all jobs (admin view) with optional filters
+ */
+export async function getAdminJobs(params?: {
+  search?: string
+  status?: string
+  source?: string
+  page?: number
+  limit?: number
+}): Promise<{ jobs: AdminJobItem[]; total: number; page: number; limit: number }> {
+  const response = await apiClient.get('/admin/jobs', { params })
+  return response.data
+}
+
+/**
+ * Activate or deactivate a job
+ */
+export async function updateJobStatus(
+  jobId: string,
+  status: 'active' | 'expired'
+): Promise<{ message: string }> {
+  const response = await apiClient.patch(`/admin/jobs/${jobId}/status`, { status })
+  return response.data
+}
+
+// ─────────────────────────────────────
+// Scraping Monitor
+// ─────────────────────────────────────
+
+export interface ScrapingSourceStatus {
+  source: string
+  circuit_open: boolean
+  failure_count: number
+  cooldown_seconds: number | null
+}
+
+export interface ScrapingStatus {
+  sources: ScrapingSourceStatus[]
+  recent_tasks: Array<{
+    id: string
+    task_type: string
+    source_platform: string | null
+    status: string
+    jobs_found: number
+    jobs_created: number
+    jobs_updated: number
+    error_message: string | null
+    created_at: string | null
+    completed_at: string | null
+  }>
+}
+
+/**
+ * Get scraping system status (circuit breakers + recent tasks)
+ */
+export async function getScrapingStatus(): Promise<ScrapingStatus> {
+  const response = await apiClient.get('/admin/scraping/status')
+  return response.data
+}
+
+/**
+ * Manually trigger a scraping job for a source
+ */
+export async function triggerScrape(source: string): Promise<{ message: string; task_id: string }> {
+  const response = await apiClient.post(`/admin/scraping/trigger/${source}`)
+  return response.data
+}
+

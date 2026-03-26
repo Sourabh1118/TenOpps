@@ -1,0 +1,162 @@
+'use client'
+
+import { useEffect, useState, useCallback } from 'react'
+import { getScrapingStatus, triggerScrape, type ScrapingStatus } from '@/lib/api/admin'
+
+const SOURCE_ICONS: Record<string, string> = { linkedin: '🔵', indeed: '🟣', naukri: '🟠', monster: '🔴' }
+
+export default function AdminScrapingPage() {
+  const [data, setData] = useState<ScrapingStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [triggering, setTriggering] = useState<string | null>(null)
+  const [triggerMsg, setTriggerMsg] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const res = await getScrapingStatus()
+      setData(res)
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to load scraping status')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleTrigger = async (source: string) => {
+    setTriggering(source)
+    setTriggerMsg(null)
+    try {
+      const res = await triggerScrape(source)
+      setTriggerMsg(`✅ ${res.message} (task: ${res.task_id})`)
+    } catch (err: any) {
+      setTriggerMsg(`❌ ${err.response?.data?.detail || 'Failed to trigger scrape'}`)
+    } finally {
+      setTriggering(null)
+    }
+  }
+
+  return (
+    <div className="p-8">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Scraping Monitor</h1>
+          <p className="text-gray-500 mt-1">Real-time status of all job scraping sources</p>
+        </div>
+        <button onClick={load} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">Refresh</button>
+      </div>
+
+      {triggerMsg && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">{triggerMsg}</div>
+      )}
+
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-16 text-gray-400">Loading...</div>
+      ) : (
+        <>
+          {/* Source Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
+            {data?.sources.map(src => (
+              <div key={src.source} className={`bg-white rounded-xl border-2 shadow-sm p-5 ${src.circuit_open ? 'border-red-300' : 'border-green-200'}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">{SOURCE_ICONS[src.source] ?? '⚙️'}</span>
+                    <h3 className="font-semibold text-gray-900 capitalize">{src.source}</h3>
+                  </div>
+                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${src.circuit_open ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                    {src.circuit_open ? '⚡ OPEN' : '✅ OK'}
+                  </span>
+                </div>
+
+                <div className="space-y-1 text-sm text-gray-600 mb-4">
+                  <div className="flex justify-between">
+                    <span>Failures</span>
+                    <span className={`font-semibold ${src.failure_count > 0 ? 'text-red-600' : 'text-gray-900'}`}>{src.failure_count} / 3</span>
+                  </div>
+                  {src.circuit_open && src.cooldown_seconds != null && (
+                    <div className="flex justify-between">
+                      <span>Cooldown</span>
+                      <span className="font-semibold text-orange-600">{Math.ceil(src.cooldown_seconds / 60)} min</span>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => handleTrigger(src.source)}
+                  disabled={triggering === src.source}
+                  className="w-full py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 font-medium"
+                >
+                  {triggering === src.source ? 'Queuing...' : '▶ Trigger Scrape'}
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Recent Tasks Table */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900">Recent Tasks</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Source</th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Type</th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
+                    <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Found</th>
+                    <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Created</th>
+                    <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Updated</th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Started</th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Error</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {!data?.recent_tasks?.length ? (
+                    <tr><td colSpan={8} className="py-12 text-center text-gray-400">No recent tasks</td></tr>
+                  ) : data.recent_tasks.map((t: any) => (
+                    <tr key={t.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-3 font-medium capitalize">{t.source_platform ?? '—'}</td>
+                      <td className="px-6 py-3 text-gray-500">{t.task_type}</td>
+                      <td className="px-6 py-3">
+                        <StatusPill status={t.status} />
+                      </td>
+                      <td className="px-6 py-3 text-center">{t.jobs_found}</td>
+                      <td className="px-6 py-3 text-center text-green-700">{t.jobs_created}</td>
+                      <td className="px-6 py-3 text-center text-blue-700">{t.jobs_updated}</td>
+                      <td className="px-6 py-3 text-gray-500 text-xs">{t.created_at ? new Date(t.created_at).toLocaleString() : '—'}</td>
+                      <td className="px-6 py-3 text-red-600 text-xs max-w-[180px] truncate" title={t.error_message ?? ''}>{t.error_message ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function StatusPill({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    completed: 'bg-green-100 text-green-800',
+    running: 'bg-blue-100 text-blue-800',
+    failed: 'bg-red-100 text-red-800',
+    pending: 'bg-yellow-100 text-yellow-800',
+    skipped: 'bg-gray-100 text-gray-600',
+  }
+  return (
+    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${map[status] ?? 'bg-gray-100 text-gray-600'}`}>
+      {status}
+    </span>
+  )
+}

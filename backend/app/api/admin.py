@@ -469,3 +469,193 @@ async def get_users(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve users list"
         )
+
+
+# ──────────────────────────────────────────────────────────────
+# Jobs Management
+# ──────────────────────────────────────────────────────────────
+
+class JobListItem(BaseModel):
+    id: str
+    title: str
+    company: str
+    location: str
+    status: str
+    source_platform: Optional[str] = None
+    source_type: str
+    posted_at: Optional[datetime] = None
+    created_at: datetime
+    application_count: int = 0
+    view_count: int = 0
+
+
+class JobsListResponse(BaseModel):
+    jobs: List[JobListItem]
+    total: int
+    page: int
+    limit: int
+
+
+@router.get("/jobs", response_model=JobsListResponse, summary="Get all jobs (admin)")
+async def get_admin_jobs(
+    search: Optional[str] = Query(None, description="Search by title or company"),
+    status_filter: Optional[str] = Query(None, alias="status", description="active, expired, all"),
+    source: Optional[str] = Query(None, description="Filter by source platform"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    admin: TokenData = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Get paginated list of all jobs for admin management."""
+    try:
+        query = db.query(Job)
+        if search:
+            query = query.filter(
+                (Job.title.ilike(f"%{search}%")) | (Job.company.ilike(f"%{search}%"))
+            )
+        if status_filter and status_filter != "all":
+            query = query.filter(Job.status == status_filter)
+        if source:
+            query = query.filter(Job.source_platform == source)
+
+        total = query.count()
+        offset = (page - 1) * limit
+        jobs = query.order_by(Job.created_at.desc()).offset(offset).limit(limit).all()
+
+        return JobsListResponse(
+            jobs=[
+                JobListItem(
+                    id=str(j.id),
+                    title=j.title,
+                    company=j.company,
+                    location=j.location,
+                    status=j.status,
+                    source_platform=j.source_platform,
+                    source_type=j.source_type.value if hasattr(j.source_type, "value") else str(j.source_type),
+                    posted_at=j.posted_at,
+                    created_at=j.created_at,
+                    application_count=j.application_count or 0,
+                    view_count=j.view_count or 0,
+                )
+                for j in jobs
+            ],
+            total=total,
+            page=page,
+            limit=limit
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving jobs: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve jobs")
+
+
+@router.patch("/jobs/{job_id}/status", summary="Update job status (activate/deactivate)")
+async def update_job_status(
+    job_id: str,
+    body: dict,
+    admin: TokenData = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Activate or deactivate a job posting."""
+    from uuid import UUID
+    job = db.query(Job).filter(Job.id == UUID(job_id)).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    new_status = body.get("status", "active")
+    job.status = new_status
+    db.commit()
+    logger.info(f"Admin {admin.user_id} set job {job_id} status to {new_status}")
+    return {"message": f"Job status updated to {new_status}", "job_id": job_id}
+
+
+# ──────────────────────────────────────────────────────────────
+# Scraping Monitor
+# ──────────────────────────────────────────────────────────────
+
+SCRAPING_SOURCES = ["linkedin", "indeed", "naukri", "monster"]
+
+
+class ScrapingSourceStatus(BaseModel):
+    source: str
+    circuit_open: bool
+    failure_count: int
+    cooldown_seconds: Optional[int] = None
+
+
+class ScrapingStatusResponse(BaseModel):
+    sources: List[ScrapingSourceStatus]
+    recent_tasks: List[dict]
+
+
+@router.get("/scraping/status", response_model=ScrapingStatusResponse, summary="Get scraping system status")
+async def get_scraping_status(
+    admin: TokenData = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Get circuit breaker status and recent task history for all scraping sources."""
+    try:
+        redis = redis_client.get_cache_client()
+        sources = []
+        for source in SCRAPING_SOURCES:
+            circuit_key = f"circuit_breaker:{source}:open"
+            failure_key = f"circuit_breaker:{source}:failures"
+            circuit_open = redis.exists(circuit_key) > 0
+            failure_count = int(redis.get(failure_key) or 0)
+            cooldown = redis.ttl(circuit_key) if circuit_open else None
+            sources.append(ScrapingSourceStatus(
+                source=source,
+                circuit_open=circuit_open,
+                failure_count=failure_count,
+                cooldown_seconds=cooldown if cooldown and cooldown > 0 else None
+            ))
+
+        from app.models.scraping_task import ScrapingTask as ScrapingTaskModel
+        recent = db.query(ScrapingTaskModel).order_by(
+            ScrapingTaskModel.created_at.desc()
+        ).limit(20).all()
+
+        recent_tasks = [
+            {
+                "id": str(t.id),
+                "task_type": t.task_type.value if hasattr(t.task_type, "value") else str(t.task_type),
+                "source_platform": t.source_platform,
+                "status": t.status.value if hasattr(t.status, "value") else str(t.status),
+                "jobs_found": t.jobs_found or 0,
+                "jobs_created": t.jobs_created or 0,
+                "jobs_updated": t.jobs_updated or 0,
+                "error_message": t.error_message,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+            }
+            for t in recent
+        ]
+
+        return ScrapingStatusResponse(sources=sources, recent_tasks=recent_tasks)
+    except Exception as e:
+        logger.error(f"Error retrieving scraping status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve scraping status")
+
+
+@router.post("/scraping/trigger/{source}", summary="Manually trigger a scraping job")
+async def trigger_scraping(
+    source: str,
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Manually trigger a Celery scraping task for a given source."""
+    if source not in SCRAPING_SOURCES:
+        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Valid: {SCRAPING_SOURCES}")
+    try:
+        from app.tasks.scraping_tasks import (
+            scrape_linkedin_jobs, scrape_indeed_jobs, scrape_naukri_jobs, scrape_monster_jobs
+        )
+        task_map = {
+            "linkedin": scrape_linkedin_jobs,
+            "indeed": scrape_indeed_jobs,
+            "naukri": scrape_naukri_jobs,
+            "monster": scrape_monster_jobs,
+        }
+        task = task_map[source].delay()
+        logger.info(f"Admin {admin.user_id} triggered manual scrape for {source}, task_id={task.id}")
+        return {"message": f"Scraping task for '{source}' queued", "task_id": task.id}
+    except Exception as e:
+        logger.error(f"Error triggering scrape for {source}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger scraping: {str(e)}")
