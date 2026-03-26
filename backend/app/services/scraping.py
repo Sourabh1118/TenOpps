@@ -980,9 +980,10 @@ class IndeedScraper(BaseScraper):
             except TimeoutException:
                 # Diagnostic: Save page source to see what Indeed is showing
                 try:
-                    with open('/tmp/indeed_debug.html', 'w') as f:
+                    debug_path = "/home/jobplatform/job-platform/backend/logs/indeed_debug.html"
+                    with open(debug_path, 'w') as f:
                         f.write(self.driver.page_source)
-                    logger.warning("Timed out waiting for Indeed job cards. Debug HTML saved to /tmp/indeed_debug.html")
+                    logger.warning(f"Timed out waiting for Indeed job cards. Debug HTML saved to {debug_path}")
                 except:
                     pass
                 return []
@@ -1205,19 +1206,24 @@ class NaukriScraper(BaseScraper):
             logger.info(f"Found {len(job_urls)} job URLs in Naukri search results")
             
             # Fetch and parse individual job pages
-            headers = self.get_browser_headers()
             jobs = []
             for job_url in job_urls[:20]:  # Limit to 20 jobs per scrape to respect rate limits
                 try:
                     # Wait for rate limit before fetching job page
                     await self.wait_for_rate_limit()
                     
-                    logger.debug(f"Fetching Naukri job page: {job_url}")
-                    job_response = self.session.get(job_url, headers=headers, timeout=30)
-                    job_response.raise_for_status()
+                    logger.debug(f"Fetching Naukri job page via Selenium: {job_url}")
+                    self.driver.get(job_url)
                     
-                    # Parse job page HTML
-                    job_soup = BeautifulSoup(job_response.content, 'html.parser')
+                    # Wait for job detail content to load
+                    try:
+                        wait = WebDriverWait(self.driver, 10)
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section.job-desc, div.jd-container")))
+                    except TimeoutException:
+                        logger.warning(f"Timeout waiting for Naukri job details at {job_url}")
+                    
+                    # Parse job page HTML from driver
+                    job_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
                     
                     # Extract job details
                     job_data = self._parse_job_page(job_soup, job_url)
@@ -1564,9 +1570,10 @@ class MonsterScraper(BaseScraper):
             except TimeoutException:
                 # Diagnostic: Save page source to see what Monster is showing
                 try:
-                    with open('/tmp/monster_debug.html', 'w') as f:
+                    debug_path = "/home/jobplatform/job-platform/backend/logs/monster_debug.html"
+                    with open(debug_path, 'w') as f:
                         f.write(self.driver.page_source)
-                    logger.warning("Timed out waiting for Monster job cards. Debug HTML saved to /tmp/monster_debug.html")
+                    logger.warning(f"Timed out waiting for Monster job cards. Debug HTML saved to {debug_path}")
                 except:
                     pass
                 return []
@@ -1584,19 +1591,20 @@ class MonsterScraper(BaseScraper):
             logger.info(f"Found {len(job_urls)} job URLs in Monster search results")
             
             # Fetch and parse individual job pages
-            headers = self.get_browser_headers()
             jobs = []
             for job_url in job_urls[:20]:  # Limit to 20 jobs per scrape to respect rate limits
                 try:
                     # Wait for rate limit before fetching job page
                     await self.wait_for_rate_limit()
                     
-                    logger.debug(f"Fetching Monster job page: {job_url}")
-                    job_response = self.session.get(job_url, headers=headers, timeout=30)
-                    job_response.raise_for_status()
+                    logger.debug(f"Fetching Monster job page via Selenium: {job_url}")
+                    self.driver.get(job_url)
+                    
+                    # Wait for content
+                    time.sleep(2)
                     
                     # Parse job page HTML
-                    job_soup = BeautifulSoup(job_response.content, 'html.parser')
+                    job_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
                     
                     # Extract job details
                     job_data = self._parse_job_page(job_soup, job_url)
