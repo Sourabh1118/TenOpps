@@ -662,3 +662,28 @@ async def trigger_scraping(
     except Exception as e:
         logger.error(f"Error triggering scrape for {source}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to trigger scraping: {str(e)}")
+
+
+@router.post("/scraping/reset-circuit-breaker/{source}", summary="Reset the circuit breaker for a source")
+async def reset_circuit_breaker(
+    source: str,
+    admin: TokenData = Depends(get_current_admin)
+):
+    """Manually reset the circuit breaker and failure count for a source."""
+    if source not in SCRAPING_SOURCES:
+        raise HTTPException(status_code=400, detail=f"Unknown source '{source}'")
+    
+    try:
+        from app.tasks.scraping_tasks import CircuitBreaker
+        CircuitBreaker.reset_failures(source)
+        
+        # Also need to clear the 'open' key
+        from app.core.redis import redis_client
+        redis = redis_client.get_cache_client()
+        redis.delete(f"circuit_breaker:{source}:open")
+        
+        logger.info(f"Admin {admin.user_id} reset circuit breaker for {source}")
+        return {"message": f"Circuit breaker reset for {source}"}
+    except Exception as e:
+        logger.error(f"Error resetting circuit breaker for {source}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reset circuit breaker")

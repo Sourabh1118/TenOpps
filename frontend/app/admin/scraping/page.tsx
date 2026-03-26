@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { getScrapingStatus, triggerScrape, type ScrapingStatus } from '@/lib/api/admin'
+import { getScrapingStatus, triggerScrape, resetCircuitBreaker, type ScrapingStatus } from '@/lib/api/admin'
 
 const SOURCE_ICONS: Record<string, string> = { linkedin: '🔵', indeed: '🟣', naukri: '🟠', monster: '🔴' }
 
@@ -10,6 +10,7 @@ export default function AdminScrapingPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [triggering, setTriggering] = useState<string | null>(null)
+  const [resetting, setResetting] = useState<string | null>(null)
   const [triggerMsg, setTriggerMsg] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -37,6 +38,20 @@ export default function AdminScrapingPage() {
       setTriggerMsg(`❌ ${err.response?.data?.detail || 'Failed to trigger scrape'}`)
     } finally {
       setTriggering(null)
+    }
+  }
+
+  const handleReset = async (source: string) => {
+    setResetting(source)
+    setTriggerMsg(null)
+    try {
+      const res = await resetCircuitBreaker(source)
+      setTriggerMsg(`✅ ${res.message}`)
+      await load()
+    } catch (err: any) {
+      setTriggerMsg(`❌ ${err.response?.data?.detail || 'Failed to reset circuit breaker'}`)
+    } finally {
+      setResetting(null)
     }
   }
 
@@ -89,13 +104,25 @@ export default function AdminScrapingPage() {
                   )}
                 </div>
 
-                <button
-                  onClick={() => handleTrigger(src.source)}
-                  disabled={triggering === src.source}
-                  className="w-full py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 font-medium"
-                >
-                  {triggering === src.source ? 'Queuing...' : '▶ Trigger Scrape'}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleTrigger(src.source)}
+                    disabled={triggering === src.source}
+                    className="flex-1 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 font-medium"
+                  >
+                    {triggering === src.source ? 'Queuing...' : '▶ Trigger Scrape'}
+                  </button>
+                  {src.circuit_open && (
+                    <button
+                      onClick={() => handleReset(src.source)}
+                      disabled={resetting === src.source}
+                      className="px-3 py-2 text-sm bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50 font-medium"
+                      title="Reset Circuit Breaker"
+                    >
+                      {resetting === src.source ? '...' : '↺ Reset'}
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

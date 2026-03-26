@@ -219,3 +219,11 @@ export async function triggerScrape(source: string): Promise<{ message: string; 
   return response.data
 }
 
+/**
+ * Manually reset the circuit breaker for a scraping source
+ */
+export async function resetCircuitBreaker(source: string): Promise<{ message: string }> {
+  const response = await apiClient.post(`/admin/scraping/reset-circuit-breaker/${source}`)
+  return response.data
+}
+
