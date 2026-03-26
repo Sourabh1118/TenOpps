@@ -132,6 +132,11 @@ class BaseScraper(ABC):
         chrome_options.add_argument("--proxy-bypass-list=*")
         chrome_options.add_argument("--remote-debugging-port=9222")
         chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-dbus")
+        chrome_options.add_argument("--disable-accelerated-2d-canvas")
+        chrome_options.add_argument("--no-first-run")
+        chrome_options.add_argument("--no-default-browser-check")
         chrome_options.add_argument(f"user-agent={random.choice(self.user_agents)}")
         
         # Redirect Selenium Manager cache to a writable directory (/tmp)
