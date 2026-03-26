@@ -145,7 +145,13 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
         if settings.APP_ENV == "development" and settings.DEBUG:
             return await call_next(request)
         
-        # Get CSRF token from header
+        # Skip CSRF check for Bearer token auth (JWT is inherently CSRF-safe —
+        # browsers cannot auto-send Authorization headers cross-origin)
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            return await call_next(request)
+        
+        # Get CSRF token from header (for cookie-based sessions only)
         csrf_token = request.headers.get("X-CSRF-Token")
         
         if not csrf_token:
@@ -153,6 +159,7 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": "CSRF token missing"}
             )
+
         
         # Get session ID from Authorization header (JWT token)
         auth_header = request.headers.get("Authorization")
