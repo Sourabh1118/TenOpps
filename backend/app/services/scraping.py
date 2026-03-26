@@ -19,6 +19,15 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Union
 import re
 from datetime import datetime, timedelta
+
+# Selenium for JavaScript-rendered sites (Requirement 1.3)
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from enum import Enum
 
 from app.core.logging import logger
@@ -71,6 +80,7 @@ class BaseScraper(ABC):
         self.max_retries = 3
         self.base_backoff_delay = 5  # seconds
         self.session = requests.Session()
+        self.driver: Optional[webdriver.Chrome] = None
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -105,6 +115,36 @@ class BaseScraper(ABC):
         if referer:
             headers['Referer'] = referer
         return headers
+    
+    def _init_driver(self) -> webdriver.Chrome:
+        """
+        Initialize a headless Chrome driver.
+        """
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument(f"user-agent={random.choice(self.user_agents)}")
+        
+        # Use existing chrome binary if possible
+        # In production, this might need to point to a specific path
+        try:
+            driver = webdriver.Chrome(options=chrome_options)
+            return driver
+        except Exception as e:
+            logger.error(f"Failed to initialize Selenium driver: {e}")
+            raise ScrapingError(f"Selenium initialization failed: {e}")
+
+    def _close_driver(self):
+        """
+        Safely close the Selenium driver.
+        """
+        if self.driver:
+            try:
+                self.driver.quit()
+                self.driver = None
+            except Exception as e:
+                logger.warning(f"Error closing Selenium driver: {e}")
     
     @abstractmethod
     async def scrape(self) -> List[Dict[str, Any]]:
@@ -877,16 +917,6 @@ class IndeedScraper(BaseScraper):
     - Normalizes Indeed data to standard schema
     """
     
-    def __init__(self, api_key: str = "", query: str = "", location: str = "", rate_limit: int = 15):
-        """
-        Initialize Indeed scraper.
-        
-        Args:
-            api_key: Legacy parameter (not used)
-            query: Job search query (keywords)
-            location: Job location filter
-            rate_limit: Maximum requests per minute (default: 15)
-        """
     def __init__(self, api_key: str, query: str, location: str = "", rate_limit: int = 15):
         super().__init__(source_name="indeed", rate_limit=rate_limit)
         self.query = query
@@ -917,21 +947,27 @@ class IndeedScraper(BaseScraper):
             }
             search_url = f"{self.base_url}?{urllib.parse.urlencode(params)}"
             
-            logger.info(f"Fetching Indeed jobs from: {search_url}")
+            logger.info(f"Fetching Indeed jobs using Selenium from: {search_url}")
             
-            # Step 1: Visit home page to get cookies
+            # Step 1: Initialize driver and fetch page
+            self.driver = self._init_driver()
+            if not self.driver:
+                raise ScrapingError("Failed to initialize Selenium driver")
+                
+            self.driver.get(search_url)
+            
+            # Step 2: Wait for job cards to appear
             try:
-                temp_headers = self.get_browser_headers()
-                self.session.get(self.base_host, headers=temp_headers, timeout=20)
-            except Exception as e:
-                logger.warning(f"Failed to get Indeed home page cookies: {e}")
+                wait = WebDriverWait(self.driver, 20)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.job_seen_beacon, td.resultContent, div.cardOutline")))
+                # Extra wait for stability
+                time.sleep(2)
+            except TimeoutException:
+                logger.warning("Timed out waiting for Indeed job cards to appear")
+                return []
             
-            # Step 2: Fetch jobs with session and randomized headers
-            headers = self.get_browser_headers(referer=self.base_host)
-            response = self.session.get(search_url, headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
+            # Step 3: Parse the fully rendered HTML
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
             
             # Target common Indeed job card containers
             job_cards = soup.find_all('div', class_='job_seen_beacon') or \
@@ -995,10 +1031,14 @@ class IndeedScraper(BaseScraper):
             logger.info(f"Successfully extracted {len(jobs)} jobs from Indeed HTML")
             return jobs
             
+        except ScrapingError:
+            raise
         except Exception as e:
-            error_msg = f"Failed to scrape Indeed: {e}"
+            error_msg = f"Unexpected error scraping Indeed: {e}"
             logger.error(error_msg)
             raise ScrapingError(error_msg)
+        finally:
+            self._close_driver()
 
     def normalize_job(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1040,7 +1080,7 @@ class IndeedScraper(BaseScraper):
         elif any(term in text_for_exp for term in ['junior', 'jr', 'entry', 'intern']):
             experience_level = 'Entry Level'
             
-        # Build normalized job
+        # Build normalized job dictionary
         normalized = {
             'title': raw_data.get('title', 'Untitled Position'),
             'company': raw_data.get('company', 'Unknown Company'),
@@ -1108,15 +1148,26 @@ class NaukriScraper(BaseScraper):
         """
         
         try:
-            logger.info(f"Fetching Naukri search results: {self.search_url}")
+            logger.info(f"Fetching Naukri search results using Selenium: {self.search_url}")
             
-            # Fetch search results page with session and browser headers
-            headers = self.get_browser_headers()
-            response = self.session.get(self.search_url, headers=headers, timeout=30)
-            response.raise_for_status()
+            # Step 1: Initialize driver and fetch page
+            self.driver = self._init_driver()
+            if not self.driver:
+                raise ScrapingError("Failed to initialize Selenium driver for Naukri")
+            self.driver.get(self.search_url)
             
-            # Parse search results HTML
-            soup = BeautifulSoup(response.content, 'html.parser')
+            # Step 2: Wait for job cards to appear (dynamic content)
+            try:
+                wait = WebDriverWait(self.driver, 20)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.srp-jobtuple-wrapper, article.jobTuple")))
+                # Extra wait for stability
+                time.sleep(2)
+            except TimeoutException:
+                logger.warning("Timed out waiting for Naukri job cards to appear")
+                return []
+            
+            # Step 3: Parse the fully rendered HTML
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
             
             # Extract job URLs from search results
             job_urls = self._extract_job_urls(soup)
@@ -1128,6 +1179,7 @@ class NaukriScraper(BaseScraper):
             logger.info(f"Found {len(job_urls)} job URLs in Naukri search results")
             
             # Fetch and parse individual job pages
+            headers = self.get_browser_headers()
             jobs = []
             for job_url in job_urls[:20]:  # Limit to 20 jobs per scrape to respect rate limits
                 try:
@@ -1158,10 +1210,14 @@ class NaukriScraper(BaseScraper):
             error_msg = f"Failed to fetch Naukri search results: {e}"
             logger.error(error_msg)
             raise ScrapingError(error_msg)
+        except ScrapingError:
+            raise
         except Exception as e:
-            error_msg = f"Failed to parse Naukri search results: {e}"
+            error_msg = f"Unexpected error scraping Naukri: {e}"
             logger.error(error_msg)
             raise ScrapingError(error_msg)
+        finally:
+            self._close_driver()
     
     def _extract_job_urls(self, soup) -> List[str]:
         """
@@ -1463,18 +1519,28 @@ class MonsterScraper(BaseScraper):
         Raises:
             ScrapingError: If fetching or parsing fails
         """
-        from bs4 import BeautifulSoup
         
         try:
-            logger.info(f"Fetching Monster search results: {self.search_url}")
+            logger.info(f"Fetching Monster search results using Selenium: {self.search_url}")
             
-            # Fetch search results page with session and browser headers
-            headers = self.get_browser_headers()
-            response = self.session.get(self.search_url, headers=headers, timeout=30)
-            response.raise_for_status()
+            # Step 1: Initialize driver and fetch page
+            self.driver = self._init_driver()
+            if not self.driver:
+                raise ScrapingError("Failed to initialize Selenium driver for Monster")
+            self.driver.get(self.search_url)
             
-            # Parse search results HTML
-            soup = BeautifulSoup(response.content, 'html.parser')
+            # Step 2: Wait for job cards to appear
+            try:
+                wait = WebDriverWait(self.driver, 20)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.job-card, [class*='job-card']")))
+                # Extra wait for stability
+                time.sleep(2)
+            except TimeoutException:
+                logger.warning("Timed out waiting for Monster job cards to appear")
+                return []
+            
+            # Step 3: Parse the fully rendered HTML
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
             
             # Extract job URLs from search results
             job_urls = self._extract_job_urls(soup)
@@ -1486,6 +1552,7 @@ class MonsterScraper(BaseScraper):
             logger.info(f"Found {len(job_urls)} job URLs in Monster search results")
             
             # Fetch and parse individual job pages
+            headers = self.get_browser_headers()
             jobs = []
             for job_url in job_urls[:20]:  # Limit to 20 jobs per scrape to respect rate limits
                 try:
@@ -1516,10 +1583,14 @@ class MonsterScraper(BaseScraper):
             error_msg = f"Failed to fetch Monster search results: {e}"
             logger.error(error_msg)
             raise ScrapingError(error_msg)
+        except ScrapingError:
+            raise
         except Exception as e:
-            error_msg = f"Failed to parse Monster search results: {e}"
+            error_msg = f"Unexpected error scraping Monster: {e}"
             logger.error(error_msg)
             raise ScrapingError(error_msg)
+        finally:
+            self._close_driver()
     
     def _extract_job_urls(self, soup) -> List[str]:
         """
