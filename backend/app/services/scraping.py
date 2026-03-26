@@ -10,6 +10,7 @@ This module provides the base infrastructure for web scraping operations:
 """
 import time
 import asyncio
+import os
 import requests
 import feedparser
 import urllib.parse
@@ -126,8 +127,10 @@ class BaseScraper(ABC):
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument(f"user-agent={random.choice(self.user_agents)}")
         
-        # Use existing chrome binary if possible
-        # In production, this might need to point to a specific path
+        # Redirect Selenium Manager cache to a writable directory (/tmp)
+        # to bypass systemd ProtectHome=read-only restrictions
+        os.environ['SE_CACHE_PATH'] = '/tmp/selenium-manager-cache'
+        
         try:
             driver = webdriver.Chrome(options=chrome_options)
             return driver
