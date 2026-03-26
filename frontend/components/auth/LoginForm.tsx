@@ -46,7 +46,9 @@ export function LoginForm() {
       )
 
       // Redirect based on role
-      if (response.role === 'employer') {
+      if (response.role === 'admin') {
+        router.push('/admin/dashboard')
+      } else if (response.role === 'employer') {
         router.push('/employer/dashboard')
       } else {
         router.push('/jobs')
