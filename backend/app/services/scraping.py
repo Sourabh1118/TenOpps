@@ -143,16 +143,8 @@ class BaseScraper(ABC):
         # to bypass systemd ProtectHome=read-only restrictions
         os.environ['SE_CACHE_PATH'] = '/tmp/selenium-manager-cache'
         
-        # Enable verbose logging to troubleshoot "Chrome instance exited"
-        # Using an absolute path to be 100% sure where the log goes
-        log_path = "/home/jobplatform/job-platform/backend/logs/chromedriver.log"
-        service = webdriver.chrome.service.Service(
-            log_output=log_path,
-            service_args=["--verbose"]
-        )
-        
         try:
-            driver = webdriver.Chrome(options=chrome_options, service=service)
+            driver = webdriver.Chrome(options=chrome_options)
             return driver
         except Exception as e:
             logger.error(f"Failed to initialize Selenium driver: {e}")
