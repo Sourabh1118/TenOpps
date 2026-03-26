@@ -2197,7 +2197,11 @@ async def scrape_and_process_jobs(
         # Calculate duration
         duration = time.time() - start_time
         
+        # Capture a more descriptive error message
         error_msg = f"Scraping failed for {source_platform}: {str(e)}"
+        if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
+             error_msg = f"{source_platform.capitalize()} returned HTTP {e.response.status_code}: {str(e)}"
+        
         logger.error(error_msg, exc_info=True)
         
         # Update task status to FAILED
