@@ -12,14 +12,17 @@ import time
 import asyncio
 import requests
 import feedparser
+import urllib.parse
+from bs4 import BeautifulSoup
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
+import re
 from datetime import datetime, timedelta
 from enum import Enum
 
 from app.core.logging import logger
 from app.core.redis import redis_client
-from app.models.job import JobType, ExperienceLevel, SourceType
+from app.models.job import Job, JobType, ExperienceLevel, SourceType
 from app.models.scraping_task import TaskType, TaskStatus
 from app.services.robots_compliance import check_robots_compliance, get_crawl_delay
 
@@ -85,7 +88,7 @@ class BaseScraper(ABC):
         Raises:
             ScrapingError: If scraping fails
         """
-        pass
+        raise NotImplementedError
     
     @abstractmethod
     def normalize_job(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -100,7 +103,7 @@ class BaseScraper(ABC):
         Returns:
             Normalized job dictionary conforming to Job model schema
         """
-        pass
+        raise NotImplementedError
     
     async def check_rate_limit(self) -> bool:
         """
@@ -367,7 +370,7 @@ def normalize_experience_level(raw_level: str) -> ExperienceLevel:
         return ExperienceLevel.SENIOR
     
     # Lead level variations
-    if any(term in raw_level_lower for term in ["lead", "manager", "head", "director"]):
+    if any(term in raw_level_lower for term in ['lead', 'manager', 'head', 'director']):
         return ExperienceLevel.LEAD
     
     # Executive level variations
@@ -405,7 +408,7 @@ def normalize_date_to_iso(raw_date: Any) -> str:
             # ISO format
             dt = datetime.fromisoformat(raw_date.replace('Z', '+00:00'))
             return dt.isoformat()
-        except:
+        except ValueError:
             pass
         
         try:
@@ -581,206 +584,251 @@ class LinkedInScraper(BaseScraper):
     
     def __init__(self, rss_feed_url: str, rate_limit: int = 10):
         """
-        Initialize LinkedIn RSS scraper.
+        Initialize LinkedIn scraper.
         
         Args:
-            rss_feed_url: LinkedIn RSS feed URL
+            rss_feed_url: LinkedIn search results URL (legacy parameter name kept for compatibility)
             rate_limit: Maximum requests per minute (default: 10)
         """
         super().__init__(source_name="linkedin", rate_limit=rate_limit)
-        self.rss_feed_url = rss_feed_url
-        logger.info(f"Initialized LinkedIn RSS scraper for feed: {rss_feed_url}")
+        self.search_url = rss_feed_url
+        self.base_url = "https://www.linkedin.com"
+        logger.info(f"Initialized LinkedIn HTML scraper for URL: {self.search_url}")
     
     async def scrape(self) -> List[Dict[str, Any]]:
         """
-        Scrape jobs from LinkedIn RSS feed.
+        Scrape jobs from LinkedIn public job search page.
         
         Implements Requirement 1.1:
-        - Fetches jobs from LinkedIn RSS feeds
-        - Parses RSS feed items
-        - Extracts job data from feed entries
+        - Fetches jobs from LinkedIn HTML guest page
+        - Parses HTML using BeautifulSoup4
+        - Extracts job data from search results
         
         Returns:
-            List of raw job dictionaries from LinkedIn RSS
+            List of raw job dictionaries from LinkedIn
             
         Raises:
             ScrapingError: If fetching or parsing fails
         """
+        from bs4 import BeautifulSoup
+        
         try:
-            logger.info(f"Fetching LinkedIn RSS feed: {self.rss_feed_url}")
+            logger.info(f"Fetching LinkedIn jobs from: {self.search_url}")
             
-            # Fetch RSS feed with timeout and realistic headers
+            # Fetch with realistic headers to avoid being blocked
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/xml,application/atom+xml,text/xml;q=0.9,*/*;q=0.8',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Referer': 'https://www.google.com/',
+                'DNT': '1',
             }
-            response = requests.get(self.rss_feed_url, headers=headers, timeout=30)
+            
+            response = requests.get(self.search_url, headers=headers, timeout=30)
             response.raise_for_status()
             
-            # Parse RSS feed
-            feed = feedparser.parse(response.content)
+            # Parse HTML
+            soup = BeautifulSoup(response.content, 'html.parser')
             
-            if feed.bozo:
-                # Feed has parsing errors
-                logger.warning(f"RSS feed parsing warning: {feed.bozo_exception}")
+            # Extract job listings
+            # Public guest page uses <li> inside <ul> with specific classes
+            job_cards = soup.find_all('div', class_='base-card') or \
+                        soup.find_all('li', class_='jobs-search-results__list-item') or \
+                        soup.find_all('div', class_='base-search-card')
+            
+            if not job_cards:
+                # Try finding all <li> if specific classes aren't present
+                results_list = soup.find('ul', class_='jobs-search__results-list')
+                if results_list:
+                    job_cards = results_list.find_all('li', recursive=False)
+            
+            if not job_cards:
+                logger.warning("No job cards found on LinkedIn search page. Structure might have changed or we are blocked.")
+                return []
+            
+            logger.info(f"Found {len(job_cards)} potential job cards on LinkedIn")
             
             jobs = []
-            
-            # Extract job data from feed entries
-            for entry in feed.entries:
+            for card in job_cards:
                 try:
-                    job_data = {
-                        'title': entry.get('title', ''),
-                        'company': entry.get('author', ''),
-                        'link': entry.get('link', ''),
-                        'description': entry.get('summary', ''),
-                        'published': entry.get('published', ''),
-                        'published_parsed': entry.get('published_parsed', None),
-                        'location': self._extract_location(entry),
-                        'job_type': self._extract_job_type(entry),
-                        'experience_level': self._extract_experience_level(entry),
-                    }
+                    # Extract title
+                    title_elem = card.find('h3', class_='base-search-card__title') or \
+                                card.find('span', class_='screen-reader-text') or \
+                                card.find('h3')
+                    title = title_elem.get_text(strip=True) if title_elem else ''
                     
-                    jobs.append(job_data)
+                    # Extract company
+                    company_elem = card.find('a', class_='hidden-nested-link') or \
+                                  card.find('h4', class_='base-search-card__subtitle') or \
+                                  card.find('div', class_='base-search-card__subtitle')
+                    company = company_elem.get_text(strip=True) if company_elem else ''
                     
+                    # Extract link
+                    link_elem = card.find('a', class_='base-card__full-link') or \
+                               card.find('a', class_='base-search-card__title-link') or \
+                               card.find('a')
+                    link = link_elem.get('href', '') if link_elem else ''
+                    
+                    # Extract location
+                    location_elem = card.find('span', class_='job-search-card__location')
+                    location = location_elem.get_text(strip=True) if location_elem else ''
+                    
+                    # Extract date
+                    date_elem = card.find('time', class_='job-search-card__listdate') or \
+                               card.find('time', class_='job-search-card__listdate--new')
+                    published = date_elem.get('datetime', '') if date_elem else ''
+                    posted_text = date_elem.get_text(strip=True) if date_elem else ''
+                    
+                    if title and link:
+                        jobs.append({
+                            'title': title,
+                            'company': company,
+                            'link': link,
+                            'location': location,
+                            'published': published,
+                            'posted_text': posted_text,
+                            'description': '', # LinkedIn guest page doesn't show description in list
+                        })
                 except Exception as e:
-                    logger.error(f"Error parsing RSS entry: {e}")
+                    logger.debug(f"Error parsing individual LinkedIn job card: {e}")
                     continue
             
-            logger.info(f"Successfully parsed {len(jobs)} jobs from LinkedIn RSS feed")
+            logger.info(f"Successfully extracted {len(jobs)} jobs from LinkedIn HTML")
             return jobs
             
         except requests.RequestException as e:
-            error_msg = f"Failed to fetch LinkedIn RSS feed: {e}"
+            error_msg = f"Failed to fetch LinkedIn search page: {e}"
             logger.error(error_msg)
             raise ScrapingError(error_msg)
         except Exception as e:
-            error_msg = f"Failed to parse LinkedIn RSS feed: {e}"
+            error_msg = f"Failed to parse LinkedIn search page: {e}"
             logger.error(error_msg)
             raise ScrapingError(error_msg)
     
     def _extract_location(self, entry: Dict[str, Any]) -> str:
         """
-        Extract location from RSS entry.
+        Extract location from HTML entry.
         
         Args:
-            entry: RSS feed entry
+            entry: Raw job dictionary from HTML scraping
             
         Returns:
-            Location string or 'Remote' as default
+            Location string or 'Remote' if applicable
         """
-        # Try to extract location from various fields
-        location = entry.get('location', '')
+        location = entry.get('location', 'Not specified')
         
-        if not location:
-            # Try to extract from summary/description
-            summary = entry.get('summary', '')
-            # Simple heuristic: look for common location patterns
-            # This is a basic implementation - can be enhanced
-            if 'Remote' in summary or 'remote' in summary:
-                location = 'Remote'
-            else:
-                location = 'Not specified'
+        # Standardize "Remote"
+        if any(term in location.lower() for term in ['remote', 'work from home', 'anywhere']):
+            return 'Remote'
         
         return location
     
     def _extract_job_type(self, entry: Dict[str, Any]) -> str:
         """
-        Extract job type from RSS entry.
+        Extract job type from HTML entry.
         
         Args:
-            entry: RSS feed entry
+            entry: Raw job dictionary from HTML scraping
             
         Returns:
             Job type string
         """
-        # Try to extract job type from tags or summary
-        tags = entry.get('tags', [])
-        for tag in tags:
-            tag_term = tag.get('term', '').lower()
-            if any(t in tag_term for t in ['full-time', 'part-time', 'contract', 'freelance', 'internship']):
-                return tag.get('term', '')
+        # LinkedIn guest list rarely has job type, but we can look for keywords in title
+        title = entry.get('title', '').lower()
         
-        # Default to full-time
+        if 'contract' in title:
+            return 'Contract'
+        elif 'intern' in title:
+            return 'Internship'
+        elif 'part-time' in title or 'part time' in title:
+            return 'Part-Time'
+        
         return 'Full-Time'
     
     def _extract_experience_level(self, entry: Dict[str, Any]) -> str:
         """
-        Extract experience level from RSS entry.
+        Extract experience level from HTML entry.
         
         Args:
-            entry: RSS feed entry
+            entry: Raw job dictionary from HTML scraping
             
         Returns:
             Experience level string
         """
-        # Try to extract from title or summary
         title = entry.get('title', '').lower()
-        summary = entry.get('summary', '').lower()
         
-        combined = f"{title} {summary}"
-        
-        if any(term in combined for term in ['senior', 'sr', 'principal', 'staff']):
+        if any(term in title for term in ['senior', 'sr', 'principal', 'staff', 'ii', 'iii']):
             return 'Senior'
-        elif any(term in combined for term in ['junior', 'jr', 'entry', 'graduate']):
+        elif any(term in title for term in ['junior', 'jr', 'entry', 'graduate', 'intern']):
             return 'Entry Level'
-        elif any(term in combined for term in ['lead', 'manager', 'director']):
+        elif any(term in title for term in ['lead', 'manager', 'director', 'vp', 'head']):
             return 'Lead'
         
         return 'Mid Level'
     
     def normalize_job(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Convert LinkedIn RSS format to standard schema.
+        Convert LinkedIn HTML format to standard schema.
         
         Implements Requirement 1.5:
-        - Maps LinkedIn RSS fields to standard schema
-        - Extracts job title, company, location, description
-        - Parses posted date from RSS pubDate
+        - Maps LinkedIn HTML fields to standard schema
+        - Extracts job title, company, location
+        - Parses posted date from relative text ('2 days ago')
         - Sets source_platform to 'linkedin'
         
         Args:
-            raw_data: Raw job data from LinkedIn RSS
+            raw_data: Raw job data from LinkedIn HTML scraping
             
         Returns:
             Normalized job dictionary conforming to Job model schema
         """
         from datetime import datetime, timedelta
+        import re
         
-        # Parse published date
-        if raw_data.get('published_parsed'):
-            import time
-            posted_at = datetime(*raw_data['published_parsed'][:6])
-        elif raw_data.get('published'):
-            posted_at = normalize_date_to_iso(raw_data['published'])
-            posted_at = datetime.fromisoformat(posted_at)
-        else:
-            posted_at = datetime.utcnow()
+        # Parse published date from relative text or machine date
+        published = raw_data.get('published', '')
+        posted_text = raw_data.get('posted_text', '').lower()
+        posted_at = datetime.utcnow()
+        
+        if published:
+             try:
+                 posted_at = datetime.fromisoformat(published.replace('Z', '+00:00'))
+             except Exception:
+                 pass
+        elif posted_text:
+             # Try to parse "2 days ago", "1 week ago", etc.
+             num_match = re.search(r'(\d+)', posted_text)
+             if num_match:
+                 num = int(num_match.group(1))
+                 if 'hour' in posted_text:
+                     posted_at = datetime.utcnow() - timedelta(hours=num)
+                 elif 'day' in posted_text:
+                     posted_at = datetime.utcnow() - timedelta(days=num)
+                 elif 'week' in posted_text:
+                     posted_at = datetime.utcnow() - timedelta(weeks=num)
+                 elif 'month' in posted_text:
+                     posted_at = datetime.utcnow() - timedelta(days=num*30)
         
         # Calculate expiration date (30 days from posting)
         expires_at = posted_at + timedelta(days=30)
         
-        # Normalize job type and experience level
-        job_type = normalize_job_type(raw_data.get('job_type', 'Full-Time'))
-        experience_level = normalize_experience_level(raw_data.get('experience_level', 'Mid Level'))
-        
-        # Extract salary info if present in description
-        description = raw_data.get('description', '')
-        salary_info = extract_salary_info(description)
+        # Check if remote
+        location = self._extract_location(raw_data)
+        remote = location == 'Remote' or 'remote' in raw_data.get('title', '').lower()
         
         # Build normalized job dictionary
         normalized = {
             'title': raw_data.get('title', 'Untitled Position'),
             'company': raw_data.get('company', 'Unknown Company'),
-            'location': raw_data.get('location', 'Not specified'),
-            'remote': 'remote' in raw_data.get('location', '').lower(),
-            'job_type': job_type,
-            'experience_level': experience_level,
-            'description': description[:5000] if description else 'No description available',
+            'location': location,
+            'remote': remote,
+            'job_type': normalize_job_type(self._extract_job_type(raw_data)),
+            'experience_level': normalize_experience_level(self._extract_experience_level(raw_data)),
+            'description': 'Description not available in summary view. Visit source page for details.',
             'requirements': None,
             'responsibilities': None,
-            'salary_min': salary_info.get('salary_min'),
-            'salary_max': salary_info.get('salary_max'),
+            'salary_min': None,
+            'salary_max': None,
             'salary_currency': 'USD',
             'source_type': SourceType.AGGREGATED,
             'source_url': raw_data.get('link', ''),
@@ -795,186 +843,193 @@ class LinkedInScraper(BaseScraper):
 
 class IndeedScraper(BaseScraper):
     """
-    Indeed API scraper.
+    Indeed web scraper using BeautifulSoup4.
     
     Implements Requirements 1.2, 1.5:
-    - Fetches jobs from Indeed Publisher API
-    - Handles API authentication and pagination
+    - Fetches jobs from Indeed public job search
+    - Handles bot-detection headers
     - Normalizes Indeed data to standard schema
     """
     
-    def __init__(self, api_key: str, query: str = "", location: str = "", rate_limit: int = 20):
+    def __init__(self, api_key: str = "", query: str = "", location: str = "", rate_limit: int = 15):
         """
-        Initialize Indeed API scraper.
+        Initialize Indeed scraper.
         
         Args:
-            api_key: Indeed Publisher API key
+            api_key: Legacy parameter (not used)
             query: Job search query (keywords)
             location: Job location filter
-            rate_limit: Maximum requests per minute (default: 20)
+            rate_limit: Maximum requests per minute (default: 15)
         """
+    def __init__(self, api_key: str, query: str, location: str = "", rate_limit: int = 15):
         super().__init__(source_name="indeed", rate_limit=rate_limit)
-        self.api_key = api_key
         self.query = query
         self.location = location
-        self.base_url = "http://api.indeed.com/ads/apisearch"
-        logger.info(f"Initialized Indeed API scraper with query='{query}', location='{location}'")
+        self.base_url = "https://www.indeed.com/jobs"
+        logger.info(f"Initialized Indeed scraper with query='{query}', location='{location}'")
     
     async def scrape(self) -> List[Dict[str, Any]]:
         """
-        Scrape jobs from Indeed Publisher API.
+        Scrape jobs from Indeed search results.
         
         Implements Requirement 1.2:
-        - Fetches jobs from Indeed API
-        - Handles pagination to fetch all results
-        - Extracts job data from API response
+        - Fetches jobs from Indeed HTML page
+        - Parses job data from search results snippet
         
         Returns:
-            List of raw job dictionaries from Indeed API
+            List of raw job dictionaries from Indeed
             
         Raises:
             ScrapingError: If fetching or parsing fails
         """
         try:
-            all_jobs = []
-            start = 0
-            limit = 25  # Indeed API default page size
+            params = {
+                'q': self.query,
+                'l': self.location,
+                'fromage': '1', # Last 24 hours
+            }
+            search_url = f"{self.base_url}?{urllib.parse.urlencode(params)}"
             
-            while True:
-                logger.info(f"Fetching Indeed jobs: start={start}, query='{self.query}', location='{self.location}'")
-                
-                # Build API request parameters
-                params = {
-                    'publisher': self.api_key,
-                    'q': self.query,
-                    'l': self.location,
-                    'format': 'json',
-                    'v': '2',
-                    'start': start,
-                    'limit': limit,
-                }
-                
-                # Fetch from Indeed API with timeout
-                response = requests.get(self.base_url, params=params, timeout=30)
-                response.raise_for_status()
-                
-                # Parse JSON response
-                data = response.json()
-                
-                # Extract results
-                results = data.get('results', [])
-                
-                if not results:
-                    # No more results
-                    break
-                
-                # Process each job result
-                for result in results:
-                    try:
-                        job_data = {
-                            'jobtitle': result.get('jobtitle', ''),
-                            'company': result.get('company', ''),
-                            'city': result.get('city', ''),
-                            'state': result.get('state', ''),
-                            'country': result.get('country', ''),
-                            'formattedLocation': result.get('formattedLocation', ''),
-                            'snippet': result.get('snippet', ''),
-                            'url': result.get('url', ''),
-                            'date': result.get('date', ''),
-                            'jobkey': result.get('jobkey', ''),
-                            'sponsored': result.get('sponsored', False),
-                            'expired': result.get('expired', False),
-                            'formattedLocationFull': result.get('formattedLocationFull', ''),
-                            'formattedRelativeTime': result.get('formattedRelativeTime', ''),
-                        }
-                        
-                        all_jobs.append(job_data)
-                        
-                    except Exception as e:
-                        logger.error(f"Error parsing Indeed job result: {e}")
+            logger.info(f"Fetching Indeed jobs from: {search_url}")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+            }
+            
+            response = requests.get(search_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Target common Indeed job card containers
+            job_cards = soup.find_all('div', class_='job_seen_beacon') or \
+                        soup.find_all('td', class_='resultContent') or \
+                        soup.find_all('div', class_='cardOutline')
+            
+            if not job_cards:
+                logger.warning("No job cards found on Indeed. Site structure might have changed or bot detection triggered.")
+                return []
+            
+            logger.info(f"Found {len(job_cards)} job cards on Indeed")
+            
+            jobs = []
+            for card in job_cards:
+                try:
+                    # Extract title and link
+                    title_anchor = card.find('a', class_='jcs-JobTitle') or \
+                                  card.find('h2', class_='jobTitle').find('a') if card.find('h2', class_='jobTitle') else None
+                    
+                    if not title_anchor:
                         continue
-                
-                # Check if there are more results
-                total_results = data.get('totalResults', 0)
-                if start + limit >= total_results:
-                    # Fetched all results
-                    break
-                
-                # Move to next page
-                start += limit
+                        
+                    title = title_anchor.get_text(strip=True)
+                    url = title_anchor.get('href', '')
+                    if url and not url.startswith('http'):
+                        url = 'https://www.indeed.com' + url
+                    
+                    # Extract company
+                    company_elem = card.find('span', {'data-testid': 'company-name'}) or \
+                                  card.find('span', class_='companyName') or \
+                                  card.find('div', class_='companyName')
+                    company = company_elem.get_text(strip=True) if company_elem else 'Unknown'
+                    
+                    # Extract location
+                    location_elem = card.find('div', {'data-testid': 'text-location'}) or \
+                                   card.find('div', class_='companyLocation')
+                    location = location_elem.get_text(strip=True) if location_elem else 'Not specified'
+                    
+                    # Extract snippet
+                    snippet_elem = card.find('div', class_='job-snippet') or \
+                                  card.find('table', class_='jobCardShelfContainer')
+                    snippet = snippet_elem.get_text(strip=True) if snippet_elem else ''
+                    
+                    # Extract date
+                    date_elem = card.find('span', class_='date') or \
+                                card.find('span', {'data-testid': 'myJobsStateDate'})
+                    date_text = date_elem.get_text(strip=True) if date_elem else ''
+                    
+                    jobs.append({
+                        'title': title,
+                        'company': company,
+                        'location': location,
+                        'url': url,
+                        'snippet': snippet,
+                        'date_text': date_text
+                    })
+                except Exception as e:
+                    logger.debug(f"Error parsing Indeed job card: {e}")
+                    continue
+                    
+            logger.info(f"Successfully extracted {len(jobs)} jobs from Indeed HTML")
+            return jobs
             
-            logger.info(f"Successfully fetched {len(all_jobs)} jobs from Indeed API")
-            return all_jobs
-            
-        except requests.RequestException as e:
-            error_msg = f"Failed to fetch from Indeed API: {e}"
-            logger.error(error_msg)
-            raise ScrapingError(error_msg)
         except Exception as e:
-            error_msg = f"Failed to parse Indeed API response: {e}"
+            error_msg = f"Failed to scrape Indeed: {e}"
             logger.error(error_msg)
             raise ScrapingError(error_msg)
-    
+
     def normalize_job(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Convert Indeed API format to standard schema.
+        Convert Indeed HTML format to standard schema.
         
         Implements Requirement 1.5:
-        - Maps Indeed API fields to standard schema
-        - Extracts job title, company, location, description
-        - Parses job type and experience level from snippet
+        - Maps Indeed HTML fields to standard schema
+        - Parses date from relative text
         - Sets source_platform to 'indeed'
         
         Args:
-            raw_data: Raw job data from Indeed API
+            raw_data: Raw job data from Indeed HTML scraping
             
         Returns:
             Normalized job dictionary conforming to Job model schema
         """
-        from datetime import datetime, timedelta
         
-        # Build location string
-        location = raw_data.get('formattedLocation') or raw_data.get('formattedLocationFull', '')
-        if not location:
-            city = raw_data.get('city', '')
-            state = raw_data.get('state', '')
-            country = raw_data.get('country', '')
-            location = ', '.join(filter(None, [city, state, country]))
+        # Parse posted date
+        date_text = raw_data.get('date_text', '').lower()
+        posted_at = datetime.utcnow()
         
-        if not location:
-            location = 'Not specified'
+        if 'today' in date_text or 'just' in date_text:
+             posted_at = datetime.utcnow()
+        else:
+             num_match = re.search(r'(\d+)', date_text)
+             if num_match:
+                 num = int(num_match.group(1))
+                 if 'day' in date_text:
+                     posted_at = datetime.utcnow() - timedelta(days=num)
         
-        # Parse posted date from relative time or date field
-        posted_at = self._parse_posted_date(raw_data.get('date', ''), raw_data.get('formattedRelativeTime', ''))
-        
-        # Calculate expiration date (30 days from posting)
+        # Calculate expiration date
         expires_at = posted_at + timedelta(days=30)
         
-        # Extract job type and experience level from snippet
-        snippet = raw_data.get('snippet', '')
-        job_type = self._extract_job_type_from_snippet(snippet)
-        experience_level = self._extract_experience_level_from_snippet(snippet)
-        
-        # Normalize job type and experience level
-        job_type = normalize_job_type(job_type)
-        experience_level = normalize_experience_level(experience_level)
-        
-        # Extract salary info from snippet
-        salary_info = extract_salary_info(snippet)
-        
-        # Build normalized job dictionary
+        # Experience level from snippet/title
+        text_for_exp = f"{raw_data.get('title', '')} {raw_data.get('snippet', '')}".lower()
+        experience_level = 'Mid Level'
+        if any(term in text_for_exp for term in ['senior', 'sr', 'principal', 'lead']):
+            experience_level = 'Senior'
+        elif any(term in text_for_exp for term in ['junior', 'jr', 'entry', 'intern']):
+            experience_level = 'Entry Level'
+            
+        # Build normalized job
         normalized = {
-            'title': raw_data.get('jobtitle', 'Untitled Position'),
+            'title': raw_data.get('title', 'Untitled Position'),
             'company': raw_data.get('company', 'Unknown Company'),
-            'location': location,
-            'remote': 'remote' in location.lower() or 'remote' in snippet.lower(),
-            'job_type': job_type,
-            'experience_level': experience_level,
-            'description': snippet[:5000] if snippet else 'No description available',
+            'location': raw_data.get('location', 'Not specified'),
+            'remote': 'remote' in raw_data.get('location', '').lower() or 'remote' in text_for_exp,
+            'job_type': JobType.FULL_TIME, # Default for Indeed search
+            'experience_level': normalize_experience_level(experience_level),
+            'description': raw_data.get('snippet', 'No description available'),
             'requirements': None,
             'responsibilities': None,
-            'salary_min': salary_info.get('salary_min'),
-            'salary_max': salary_info.get('salary_max'),
+            'salary_min': None,
+            'salary_max': None,
             'salary_currency': 'USD',
             'source_type': SourceType.AGGREGATED,
             'source_url': raw_data.get('url', ''),
@@ -985,118 +1040,6 @@ class IndeedScraper(BaseScraper):
         
         logger.debug(f"Normalized Indeed job: {normalized['title']} at {normalized['company']}")
         return normalized
-    
-    def _parse_posted_date(self, date_str: str, relative_time_str: str) -> datetime:
-        """
-        Parse posted date from Indeed API date or relative time string.
-        
-        Args:
-            date_str: Date string from API (e.g., "Mon, 15 Jan 2024 10:00:00 GMT")
-            relative_time_str: Relative time string (e.g., "2 days ago", "Just posted")
-            
-        Returns:
-            datetime object representing posted date
-        """
-        # Try parsing date_str first
-        if date_str:
-            try:
-                # Try RFC 2822 format
-                from email.utils import parsedate_to_datetime
-                return parsedate_to_datetime(date_str)
-            except:
-                pass
-            
-            try:
-                # Try ISO format
-                return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-            except:
-                pass
-        
-        # Try parsing relative time
-        if relative_time_str:
-            try:
-                relative_lower = relative_time_str.lower()
-                
-                if 'just posted' in relative_lower or 'today' in relative_lower:
-                    return datetime.utcnow()
-                
-                # Extract number of days/hours
-                import re
-                match = re.search(r'(\d+)\s*(day|hour|minute)', relative_lower)
-                if match:
-                    value = int(match.group(1))
-                    unit = match.group(2)
-                    
-                    if 'day' in unit:
-                        return datetime.utcnow() - timedelta(days=value)
-                    elif 'hour' in unit:
-                        return datetime.utcnow() - timedelta(hours=value)
-                    elif 'minute' in unit:
-                        return datetime.utcnow() - timedelta(minutes=value)
-            except:
-                pass
-        
-        # Default to current time if parsing fails
-        logger.warning(f"Could not parse Indeed date '{date_str}' or '{relative_time_str}', using current time")
-        return datetime.utcnow()
-    
-    def _extract_job_type_from_snippet(self, snippet: str) -> str:
-        """
-        Extract job type from Indeed snippet text.
-        
-        Args:
-            snippet: Job description snippet
-            
-        Returns:
-            Job type string
-        """
-        if not snippet:
-            return 'Full-Time'
-        
-        snippet_lower = snippet.lower()
-        
-        # Check for job type keywords
-        if any(term in snippet_lower for term in ['part-time', 'part time', 'parttime']):
-            return 'Part-Time'
-        elif any(term in snippet_lower for term in ['contract', 'contractor', 'temporary']):
-            return 'Contract'
-        elif any(term in snippet_lower for term in ['freelance', 'freelancer']):
-            return 'Freelance'
-        elif any(term in snippet_lower for term in ['intern', 'internship']):
-            return 'Internship'
-        elif any(term in snippet_lower for term in ['full-time', 'full time', 'fulltime', 'permanent']):
-            return 'Full-Time'
-        
-        # Default to full-time
-        return 'Full-Time'
-    
-    def _extract_experience_level_from_snippet(self, snippet: str) -> str:
-        """
-        Extract experience level from Indeed snippet text.
-        
-        Args:
-            snippet: Job description snippet
-            
-        Returns:
-            Experience level string
-        """
-        if not snippet:
-            return 'Mid Level'
-        
-        snippet_lower = snippet.lower()
-        
-        # Check for experience level keywords
-        if any(term in snippet_lower for term in ['senior', 'sr.', 'principal', 'staff']):
-            return 'Senior'
-        elif any(term in snippet_lower for term in ['junior', 'jr.', 'entry', 'entry-level', 'graduate']):
-            return 'Entry Level'
-        elif any(term in snippet_lower for term in ['lead', 'manager', 'director']):
-            return 'Lead'
-        elif any(term in snippet_lower for term in ['executive', 'vp', 'vice president', 'cto', 'ceo']):
-            return 'Executive'
-        
-        # Default to mid level
-        return 'Mid Level'
 
 
 class NaukriScraper(BaseScraper):
@@ -1140,7 +1083,6 @@ class NaukriScraper(BaseScraper):
         Raises:
             ScrapingError: If fetching or parsing fails
         """
-        from bs4 import BeautifulSoup
         
         try:
             logger.info(f"Fetching Naukri search results: {self.search_url}")
@@ -1994,9 +1936,7 @@ async def scrape_and_process_jobs(
         - jobs_created: int
         - jobs_updated: int
         - duration: float (seconds)
-        - error: Optional[str]
     """
-    from app.models.job import Job
     from app.models.job_source import JobSource
     from app.services.deduplication import process_job_with_deduplication
     from app.services.quality_scoring import calculate_quality_score
@@ -2047,7 +1987,8 @@ async def scrape_and_process_jobs(
             scraper_config = {}
         
         # Get scraper-specific configuration from settings
-        raw_jobs = []
+        raw_jobs: List[Dict[str, Any]] = []
+        scraper: Optional[BaseScraper] = None
         if source_platform.lower() == 'linkedin':
             # Use plural LINKEDIN_RSS_URLS as defined in config.py
             rss_urls = scraper_config.get('rss_urls') or getattr(settings, 'LINKEDIN_RSS_URLS', [])
@@ -2069,10 +2010,10 @@ async def scrape_and_process_jobs(
                     logger.error(f"Error scraping LinkedIn feed {url}: {e}")
             
             # Ensure we have a scraper instance for normalization later
-            if not locals().get('scraper') and rss_urls:
-                 scraper = scraper_class(rss_feed_url=rss_urls[0])
-            elif not locals().get('scraper'):
-                 scraper = scraper_class(rss_feed_url='https://www.linkedin.com/jobs/search/?format=rss')
+            if not scraper and rss_urls:
+                scraper = scraper_class(rss_feed_url=rss_urls[0])
+            elif not scraper:
+                scraper = scraper_class(rss_feed_url='https://www.linkedin.com/jobs/search/')
         elif source_platform.lower() == 'indeed':
             api_key = scraper_config.get('api_key', getattr(settings, 'INDEED_API_KEY', ''))
             query = scraper_config.get('query', 'software engineer')
@@ -2089,6 +2030,11 @@ async def scrape_and_process_jobs(
             raw_jobs = await scraper.scrape_with_retry()
         else:
             raise ValueError(f"Unsupported source platform: {source_platform}")
+            
+        if not scraper:
+            logger.error(f"Failed to initialize scraper for {source_platform}")
+            result['error'] = f"Scraper not initialized for {source_platform}"
+            return result
         
         logger.info(f"Starting scraping for {source_platform}")
         
