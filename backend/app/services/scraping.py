@@ -987,8 +987,13 @@ class IndeedScraper(BaseScraper):
             # Target common Indeed job card containers
             job_cards = soup.find_all('div', class_='job_seen_beacon') or \
                         soup.find_all('td', class_='resultContent') or \
-                        soup.find_all('div', class_='cardOutline')
+                        soup.find_all('div', class_='cardOutline') or \
+                        soup.find_all('li', class_='eu4oa1w0') # Recent Indeed structure
             
+            if not job_cards:
+                # Fallback to broader list items if specific cards aren't found
+                job_cards = soup.select('ul.jobsearch-ResultsList > li')
+                
             if not job_cards:
                 logger.warning("No job cards found on Indeed. Site structure might have changed or bot detection triggered.")
                 return []
@@ -1620,11 +1625,11 @@ class MonsterScraper(BaseScraper):
         job_urls = []
         
         # Monster uses various selectors for job listings
-        # Try multiple selectors to handle different page layouts
         job_cards = (
             soup.find_all('div', class_='job-card') or
             soup.find_all('section', class_='card-content') or
-            soup.find_all('div', class_='job-cardstyle__JobCardComponent')
+            soup.find_all('div', class_='job-cardstyle__JobCardComponent') or
+            soup.find_all('div', attrs={'data-testid': 'job-card'})
         )
         
         for card in job_cards:
