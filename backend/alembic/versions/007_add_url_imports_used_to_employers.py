@@ -1,7 +1,7 @@
 """add url_imports_used to employers
 
 Revision ID: 007
-Revises: 006
+Revises: 006_create_job_seekers_table
 Create Date: 2024-01-15 10:00:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '007'
-down_revision = '006'
+down_revision = '006_create_job_seekers_table'
 branch_labels = None
 depends_on = None
 

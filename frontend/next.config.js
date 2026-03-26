@@ -15,7 +15,7 @@ const nextConfig = {
 
   // Configure image optimization
   images: {
-    domains: ['localhost', 'your-backend-api.com'],
+    domains: ['localhost', 'trusanity.com'],
     formats: ['image/avif', 'image/webp'],
     deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],

@@ -1,0 +1,26 @@
+# Copy this content to /home/jobplatform/job-platform/backend/.env
+
+# Database
+DATABASE_URL=postgresql://jobplatform:your_secure_password_here@localhost/jobplatform_db
+
+# JWT Settings (use SECRET_KEY for JWT)
+SECRET_KEY=cf1c2839a5f8e7d6b4c3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1
+JWT_SECRET_KEY=cf1c2839a5f8e7d6b4c3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# Redis
+REDIS_URL=redis://localhost:6379/0
+
+# Celery (required fields)
+CELERY_BROKER_URL=redis://localhost:6379/1
+CELERY_RESULT_BACKEND=redis://localhost:6379/2
+
+# CORS
+CORS_ORIGINS=["https://trusanity.com","https://www.trusanity.com"]
+
+# Optional: Stripe (if you're using payments)
+# STRIPE_SECRET_KEY=your_stripe_secret_key
+# STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
+# STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret

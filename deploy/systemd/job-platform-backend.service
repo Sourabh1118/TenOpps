@@ -1,0 +1,27 @@
+[Unit]
+Description=Job Platform - FastAPI Backend
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=jobplatform
+Group=jobplatform
+WorkingDirectory=/home/jobplatform/job-platform/backend
+EnvironmentFile=/home/jobplatform/job-platform/backend/.env
+ExecStart=/home/jobplatform/job-platform/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=job-platform-backend
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/jobplatform/job-platform/backend/uploads /home/jobplatform/job-platform/backend/logs
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

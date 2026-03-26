@@ -1,0 +1,27 @@
+[Unit]
+Description=Job Platform - Celery Beat Scheduler
+After=network.target redis-server.service job-platform-celery-worker.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=jobplatform
+Group=jobplatform
+WorkingDirectory=/home/jobplatform/job-platform/backend
+EnvironmentFile=/home/jobplatform/job-platform/backend/.env
+ExecStart=/home/jobplatform/job-platform/backend/venv/bin/celery -A app.tasks.celery_app beat --loglevel=info
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=job-platform-celery-beat
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/jobplatform/job-platform/backend/logs
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

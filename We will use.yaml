@@ -1,0 +1,24 @@
+We will use 
+ Python (best for scraping/data processing)
+  - Scrapy: Web scraping framework
+  - BeautifulSoup4: HTML parsing
+  - Selenium: Dynamic content scraping
+  - Feedparser: RSS feed parsing
+  - FastAPI/Flask: API server
+  
+- Node.js (alternative)
+  - Puppeteer: Headless browser
+  - Cheerio: HTML parsing
+  - Express: API server
+
+- Database
+  - PostgreSQL (free, robust, full-text search)
+
+- Task Scheduling
+  - Node-cron (Node.js) or - Celery (Python) + Redis (We will go with your recommandation)
+
+- Frontend
+  - React/Next.js
+  - TailwindCSS for styling
+  - MeiliSearch (self-hosted) for search
+  
