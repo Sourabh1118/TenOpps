@@ -13,6 +13,7 @@ import asyncio
 import requests
 import feedparser
 import urllib.parse
+import random
 from bs4 import BeautifulSoup
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Union
@@ -69,11 +70,41 @@ class BaseScraper(ABC):
         self.rate_limit_period = rate_limit_period
         self.max_retries = 3
         self.base_backoff_delay = 5  # seconds
+        self.session = requests.Session()
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0'
+        ]
         
         logger.info(
             f"Initialized {self.source_name} scraper with "
             f"rate limit: {rate_limit}/{rate_limit_period}s"
         )
+    
+    def get_browser_headers(self, referer: Optional[str] = None) -> Dict[str, str]:
+        """
+        Get randomized browser-like headers to avoid bot detection.
+        """
+        headers = {
+            'User-Agent': random.choice(self.user_agents),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+        }
+        if referer:
+            headers['Referer'] = referer
+        return headers
     
     @abstractmethod
     async def scrape(self) -> List[Dict[str, Any]]:
@@ -615,16 +646,11 @@ class LinkedInScraper(BaseScraper):
         try:
             logger.info(f"Fetching LinkedIn jobs from: {self.search_url}")
             
-            # Fetch with realistic headers to avoid being blocked
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Referer': 'https://www.google.com/',
-                'DNT': '1',
-            }
+            # Generate randomized browser headers
+            headers = self.get_browser_headers()
             
-            response = requests.get(self.search_url, headers=headers, timeout=30)
+            logger.info(f"Fetching LinkedIn search results: {self.search_url}")
+            response = self.session.get(self.search_url, headers=headers, timeout=30)
             response.raise_for_status()
             
             # Parse HTML
@@ -866,6 +892,7 @@ class IndeedScraper(BaseScraper):
         self.query = query
         self.location = location
         self.base_url = "https://www.indeed.com/jobs"
+        self.base_host = "https://www.indeed.com"
         logger.info(f"Initialized Indeed scraper with query='{query}', location='{location}'")
     
     async def scrape(self) -> List[Dict[str, Any]]:
@@ -892,20 +919,16 @@ class IndeedScraper(BaseScraper):
             
             logger.info(f"Fetching Indeed jobs from: {search_url}")
             
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-            }
+            # Step 1: Visit home page to get cookies
+            try:
+                temp_headers = self.get_browser_headers()
+                self.session.get(self.base_host, headers=temp_headers, timeout=20)
+            except Exception as e:
+                logger.warning(f"Failed to get Indeed home page cookies: {e}")
             
-            response = requests.get(search_url, headers=headers, timeout=30)
+            # Step 2: Fetch jobs with session and randomized headers
+            headers = self.get_browser_headers(referer=self.base_host)
+            response = self.session.get(search_url, headers=headers, timeout=30)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -1087,11 +1110,9 @@ class NaukriScraper(BaseScraper):
         try:
             logger.info(f"Fetching Naukri search results: {self.search_url}")
             
-            # Fetch search results page with timeout
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            response = requests.get(self.search_url, headers=headers, timeout=30)
+            # Fetch search results page with session and browser headers
+            headers = self.get_browser_headers()
+            response = self.session.get(self.search_url, headers=headers, timeout=30)
             response.raise_for_status()
             
             # Parse search results HTML
@@ -1114,7 +1135,7 @@ class NaukriScraper(BaseScraper):
                     await self.wait_for_rate_limit()
                     
                     logger.debug(f"Fetching Naukri job page: {job_url}")
-                    job_response = requests.get(job_url, headers=headers, timeout=30)
+                    job_response = self.session.get(job_url, headers=headers, timeout=30)
                     job_response.raise_for_status()
                     
                     # Parse job page HTML
@@ -1154,13 +1175,13 @@ class NaukriScraper(BaseScraper):
         """
         job_urls = []
         
-        # Naukri uses article tags with class 'jobTuple' for job listings
-        job_cards = soup.find_all('article', class_='jobTuple')
+        # Modern Naukri uses 'srp-jobtuple-wrapper' instead of legacy 'jobTuple'
+        job_cards = soup.select('div.srp-jobtuple-wrapper, article.jobTuple')
         
         for card in job_cards:
             try:
-                # Find the job title link
-                title_link = card.find('a', class_='title')
+                # Find the job title link - usually has class 'title'
+                title_link = card.select_one('a.title, a.job-title')
                 if title_link and title_link.get('href'):
                     job_url = title_link['href']
                     
@@ -1447,11 +1468,9 @@ class MonsterScraper(BaseScraper):
         try:
             logger.info(f"Fetching Monster search results: {self.search_url}")
             
-            # Fetch search results page with timeout
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            response = requests.get(self.search_url, headers=headers, timeout=30)
+            # Fetch search results page with session and browser headers
+            headers = self.get_browser_headers()
+            response = self.session.get(self.search_url, headers=headers, timeout=30)
             response.raise_for_status()
             
             # Parse search results HTML
@@ -1474,7 +1493,7 @@ class MonsterScraper(BaseScraper):
                     await self.wait_for_rate_limit()
                     
                     logger.debug(f"Fetching Monster job page: {job_url}")
-                    job_response = requests.get(job_url, headers=headers, timeout=30)
+                    job_response = self.session.get(job_url, headers=headers, timeout=30)
                     job_response.raise_for_status()
                     
                     # Parse job page HTML
