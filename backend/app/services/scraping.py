@@ -131,14 +131,21 @@ class BaseScraper(ABC):
         chrome_options.add_argument("--proxy-server='direct://'")
         chrome_options.add_argument("--proxy-bypass-list=*")
         chrome_options.add_argument("--remote-debugging-port=9222")
+        chrome_options.add_argument("--disable-software-rasterizer")
         chrome_options.add_argument(f"user-agent={random.choice(self.user_agents)}")
         
         # Redirect Selenium Manager cache to a writable directory (/tmp)
         # to bypass systemd ProtectHome=read-only restrictions
         os.environ['SE_CACHE_PATH'] = '/tmp/selenium-manager-cache'
         
+        # Enable verbose logging to troubleshoot "Chrome instance exited"
+        service = webdriver.chrome.service.Service(
+            log_output="/tmp/chromedriver.log",
+            service_args=["--verbose"]
+        )
+        
         try:
-            driver = webdriver.Chrome(options=chrome_options)
+            driver = webdriver.Chrome(options=chrome_options, service=service)
             return driver
         except Exception as e:
             logger.error(f"Failed to initialize Selenium driver: {e}")
