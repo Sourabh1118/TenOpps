@@ -139,8 +139,10 @@ class BaseScraper(ABC):
         os.environ['SE_CACHE_PATH'] = '/tmp/selenium-manager-cache'
         
         # Enable verbose logging to troubleshoot "Chrome instance exited"
+        # Using the backend/logs directory to avoid systemd PrivateTmp invisibility
+        log_path = os.path.join(os.getcwd(), "logs", "chromedriver.log")
         service = webdriver.chrome.service.Service(
-            log_output="/tmp/chromedriver.log",
+            log_output=log_path,
             service_args=["--verbose"]
         )
         
