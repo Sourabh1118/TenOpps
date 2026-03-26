@@ -51,12 +51,12 @@ class ScrapingTask(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
 
     # Task identification
-    task_type = Column(Enum(TaskType), nullable=False, index=True)
+    task_type = Column(Enum(TaskType, values_callable=lambda obj: [e.value for e in obj]), nullable=False, index=True)
     source_platform = Column(String(50), nullable=True)  # LinkedIn, Indeed, Naukri, Monster, etc.
     target_url = Column(Text, nullable=True)  # For URL imports
 
     # Status tracking
-    status = Column(Enum(TaskStatus), nullable=False, default=TaskStatus.PENDING, index=True)
+    status = Column(Enum(TaskStatus, values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=TaskStatus.PENDING, index=True)
 
     # Execution timing
     started_at = Column(DateTime(timezone=True), nullable=True)

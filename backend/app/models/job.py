@@ -85,8 +85,8 @@ class Job(Base):
     company = Column(String(100), nullable=False, index=True)
     location = Column(String(200), nullable=False)
     remote = Column(Boolean, default=False, nullable=False)
-    job_type = Column(Enum(JobType), nullable=False)
-    experience_level = Column(Enum(ExperienceLevel), nullable=False)
+    job_type = Column(Enum(JobType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
+    experience_level = Column(Enum(ExperienceLevel, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
 
     # Detailed information
     description = Column(Text, nullable=False)
@@ -99,14 +99,14 @@ class Job(Base):
     salary_currency = Column(String(3), default="USD", nullable=True)
 
     # Source information
-    source_type = Column(Enum(SourceType), nullable=False, index=True)
+    source_type = Column(Enum(SourceType, values_callable=lambda obj: [e.value for e in obj]), nullable=False, index=True)
     source_url = Column(Text, nullable=True)  # Original job URL
     source_platform = Column(String(50), nullable=True)  # LinkedIn, Indeed, etc.
     employer_id = Column(GUID(), nullable=True)  # For direct posts
 
     # Quality and status
     quality_score = Column(Float, nullable=False, default=0.0, index=True)
-    status = Column(Enum(JobStatus), nullable=False, default=JobStatus.ACTIVE, index=True)
+    status = Column(Enum(JobStatus, values_callable=lambda obj: [e.value for e in obj]), nullable=False, default=JobStatus.ACTIVE, index=True)
 
     # Dates
     posted_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True)
