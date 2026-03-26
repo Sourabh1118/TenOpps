@@ -345,7 +345,7 @@ async def get_platform_stats(
         # Count applications
         total_applications = db.query(func.count(Application.id)).scalar() or 0
         applications_today = db.query(func.count(Application.id)).filter(
-            Application.created_at >= today_start
+            Application.applied_at >= today_start
         ).scalar() or 0
         
         logger.info(f"Admin {admin.user_id} retrieved platform statistics")
