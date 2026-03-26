@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, cast, String
 
 from app.api.dependencies import get_current_admin
 from app.schemas.auth import TokenData
@@ -333,7 +333,7 @@ async def get_platform_stats(
         # Count jobs
         total_jobs = db.query(func.count(Job.id)).scalar() or 0
         active_jobs = db.query(func.count(Job.id)).filter(
-            Job.status == JobStatus.ACTIVE
+            cast(Job.status, String) == 'active'
         ).scalar() or 0
         
         # Count jobs posted today
@@ -514,11 +514,7 @@ async def get_admin_jobs(
                 (Job.title.ilike(f"%{search}%")) | (Job.company.ilike(f"%{search}%"))
             )
         if status_filter and status_filter != "all":
-            try:
-                status_enum = JobStatus(status_filter)  # 'active' -> JobStatus.ACTIVE
-                query = query.filter(Job.status == status_enum)
-            except ValueError:
-                pass  # ignore invalid status filter
+            query = query.filter(cast(Job.status, String) == status_filter)
         if source:
             query = query.filter(Job.source_platform == source)
 
