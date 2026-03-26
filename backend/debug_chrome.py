@@ -25,7 +25,7 @@ def test_chrome():
     
     os.environ['SE_CACHE_PATH'] = '/tmp/selenium-manager-cache'
     
-    log_path = os.path.join(os.getcwd(), "logs", "test_chromedriver.log")
+    log_path = "/tmp/test_chromedriver.log"
     print(f"Logging to: {log_path}")
     
     service = Service(
