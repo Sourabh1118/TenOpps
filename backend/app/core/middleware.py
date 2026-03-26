@@ -79,14 +79,19 @@ class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
     Implements Requirement 13.4:
     - Redirects HTTP requests to HTTPS in production
     - Allows HTTP in development for local testing
+    - Respects X-Forwarded-Proto header from reverse proxies (Nginx)
     """
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Redirect HTTP to HTTPS in production."""
         # Only enforce HTTPS in production
         if settings.APP_ENV == "production":
-            # Check if request is HTTP
-            if request.url.scheme == "http":
+            # When behind a reverse proxy (Nginx), check X-Forwarded-Proto
+            # instead of request.url.scheme, because the proxy connects
+            # to the backend over plain HTTP on localhost.
+            forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+            
+            if forwarded_proto == "http":
                 # Build HTTPS URL
                 https_url = request.url.replace(scheme="https")
                 return JSONResponse(

@@ -292,6 +292,12 @@ for svc in job-platform-backend job-platform-celery-worker job-platform-celery-b
     log "${svc} started"
 done
 
+# Install rate-limit zone definitions (goes in http{} context via conf.d)
+cat > /etc/nginx/conf.d/rate-limits.conf <<'RATELIMITEOF'
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=30r/s;
+limit_req_zone $binary_remote_addr zone=login_limit:10m rate=5r/m;
+RATELIMITEOF
+
 # Setup Nginx -- start with HTTP-only config first (SSL added by certbot)
 cat > /etc/nginx/sites-available/job-platform <<'NGINXEOF'
 server {
@@ -303,6 +309,8 @@ server {
 
     # Backend API
     location /api/ {
+        limit_req zone=api_limit burst=20 nodelay;
+
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -315,8 +323,10 @@ server {
         proxy_read_timeout 60s;
     }
 
+    # Stricter rate limit for login
     location /api/auth/login {
         limit_req zone=login_limit burst=3 nodelay;
+
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
