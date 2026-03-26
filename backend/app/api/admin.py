@@ -26,7 +26,7 @@ from app.db.session import get_db
 from app.models.admin import Admin
 from app.models.employer import Employer
 from app.models.job_seeker import JobSeeker
-from app.models.job import Job
+from app.models.job import Job, JobStatus
 from app.models.application import Application
 
 
@@ -333,7 +333,7 @@ async def get_platform_stats(
         # Count jobs
         total_jobs = db.query(func.count(Job.id)).scalar() or 0
         active_jobs = db.query(func.count(Job.id)).filter(
-            Job.status == 'active'
+            Job.status == JobStatus.ACTIVE
         ).scalar() or 0
         
         # Count jobs posted today
@@ -514,7 +514,11 @@ async def get_admin_jobs(
                 (Job.title.ilike(f"%{search}%")) | (Job.company.ilike(f"%{search}%"))
             )
         if status_filter and status_filter != "all":
-            query = query.filter(Job.status == status_filter)
+            try:
+                status_enum = JobStatus(status_filter)  # 'active' -> JobStatus.ACTIVE
+                query = query.filter(Job.status == status_enum)
+            except ValueError:
+                pass  # ignore invalid status filter
         if source:
             query = query.filter(Job.source_platform == source)
 
@@ -560,11 +564,14 @@ async def update_job_status(
     job = db.query(Job).filter(Job.id == UUID(job_id)).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    new_status = body.get("status", "active")
-    job.status = new_status
+    try:
+        new_status_enum = JobStatus(body.get("status", "active"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid status value")
+    job.status = new_status_enum
     db.commit()
-    logger.info(f"Admin {admin.user_id} set job {job_id} status to {new_status}")
-    return {"message": f"Job status updated to {new_status}", "job_id": job_id}
+    logger.info(f"Admin {admin.user_id} set job {job_id} status to {new_status_enum.value}")
+    return {"message": f"Job status updated to {new_status_enum.value}", "job_id": job_id}
 
 
 # ──────────────────────────────────────────────────────────────
