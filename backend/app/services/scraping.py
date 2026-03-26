@@ -978,7 +978,13 @@ class IndeedScraper(BaseScraper):
                 # Extra wait for stability
                 time.sleep(2)
             except TimeoutException:
-                logger.warning("Timed out waiting for Indeed job cards to appear")
+                # Diagnostic: Save page source to see what Indeed is showing
+                try:
+                    with open('/tmp/indeed_debug.html', 'w') as f:
+                        f.write(self.driver.page_source)
+                    logger.warning("Timed out waiting for Indeed job cards. Debug HTML saved to /tmp/indeed_debug.html")
+                except:
+                    pass
                 return []
             
             # Step 3: Parse the fully rendered HTML
@@ -1556,7 +1562,13 @@ class MonsterScraper(BaseScraper):
                 # Extra wait for stability
                 time.sleep(2)
             except TimeoutException:
-                logger.warning("Timed out waiting for Monster job cards to appear")
+                # Diagnostic: Save page source to see what Monster is showing
+                try:
+                    with open('/tmp/monster_debug.html', 'w') as f:
+                        f.write(self.driver.page_source)
+                    logger.warning("Timed out waiting for Monster job cards. Debug HTML saved to /tmp/monster_debug.html")
+                except:
+                    pass
                 return []
             
             # Step 3: Parse the fully rendered HTML
