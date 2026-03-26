@@ -609,8 +609,12 @@ class LinkedInScraper(BaseScraper):
         try:
             logger.info(f"Fetching LinkedIn RSS feed: {self.rss_feed_url}")
             
-            # Fetch RSS feed with timeout
-            response = requests.get(self.rss_feed_url, timeout=30)
+            # Fetch RSS feed with timeout and realistic headers
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/xml,application/atom+xml,text/xml;q=0.9,*/*;q=0.8',
+            }
+            response = requests.get(self.rss_feed_url, headers=headers, timeout=30)
             response.raise_for_status()
             
             # Parse RSS feed
@@ -2043,27 +2047,52 @@ async def scrape_and_process_jobs(
             scraper_config = {}
         
         # Get scraper-specific configuration from settings
+        raw_jobs = []
         if source_platform.lower() == 'linkedin':
-            rss_url = scraper_config.get('rss_url', getattr(settings, 'LINKEDIN_RSS_URL', 'https://www.linkedin.com/jobs/search/?f_TPR=r86400&format=rss'))
-            scraper = scraper_class(rss_feed_url=rss_url)
+            # Use plural LINKEDIN_RSS_URLS as defined in config.py
+            rss_urls = scraper_config.get('rss_urls') or getattr(settings, 'LINKEDIN_RSS_URLS', [])
+            if not rss_urls:
+                # Fallback to single URL or default
+                rss_urls = [scraper_config.get('rss_url', 'https://www.linkedin.com/jobs/search/?f_TPR=r86400&format=rss')]
+            
+            if isinstance(rss_urls, str):
+                rss_urls = [rss_urls]
+            
+            for url in rss_urls:
+                try:
+                    logger.info(f"Scraping LinkedIn feed: {url}")
+                    scraper = scraper_class(rss_feed_url=url)
+                    # Use scrape_with_retry for individual feeds
+                    feed_jobs = await scraper.scrape_with_retry()
+                    raw_jobs.extend(feed_jobs)
+                except Exception as e:
+                    logger.error(f"Error scraping LinkedIn feed {url}: {e}")
+            
+            # Ensure we have a scraper instance for normalization later
+            if not locals().get('scraper') and rss_urls:
+                 scraper = scraper_class(rss_feed_url=rss_urls[0])
+            elif not locals().get('scraper'):
+                 scraper = scraper_class(rss_feed_url='https://www.linkedin.com/jobs/search/?format=rss')
         elif source_platform.lower() == 'indeed':
             api_key = scraper_config.get('api_key', getattr(settings, 'INDEED_API_KEY', ''))
             query = scraper_config.get('query', 'software engineer')
             location = scraper_config.get('location', '')
             scraper = scraper_class(api_key=api_key, query=query, location=location)
+            raw_jobs = await scraper.scrape_with_retry()
         elif source_platform.lower() == 'naukri':
             search_url = scraper_config.get('search_url', getattr(settings, 'NAUKRI_SEARCH_URL', 'https://www.naukri.com/software-engineer-jobs'))
             scraper = scraper_class(search_url=search_url)
+            raw_jobs = await scraper.scrape_with_retry()
         elif source_platform.lower() == 'monster':
             search_url = scraper_config.get('search_url', getattr(settings, 'MONSTER_SEARCH_URL', 'https://www.monster.com/jobs/search/?q=software-engineer'))
             scraper = scraper_class(search_url=search_url)
+            raw_jobs = await scraper.scrape_with_retry()
         else:
             raise ValueError(f"Unsupported source platform: {source_platform}")
         
         logger.info(f"Starting scraping for {source_platform}")
         
-        # Fetch raw jobs from source with retry logic
-        raw_jobs = await scraper.scrape_with_retry()
+        # raw_jobs is now already populated for the specific platform logic above
         jobs_found = len(raw_jobs)
         
         logger.info(f"Found {jobs_found} jobs from {source_platform}")
