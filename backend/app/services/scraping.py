@@ -1361,6 +1361,43 @@ class NaukriScraper(BaseScraper):
             Dictionary with job data or None if parsing fails
         """
         try:
+            # Step 1: Try to extract data from structured LD+JSON (most reliable)
+            json_script = soup.find('script', type='application/ld+json')
+            if json_script:
+                try:
+                    import json
+                    ld_data = json.loads(json_script.string)
+                    if ld_data:
+                        # Schema.org JobPosting structure
+                        title = ld_data.get('title')
+                        company = ld_data.get('hiringOrganization', {}).get('name')
+                        description = ld_data.get('description', '')
+                        location = ld_data.get('jobLocation', {}).get('address', {}).get('addressLocality', '')
+                        posted = ld_data.get('datePosted', '')
+                        
+                        # Use these if found, otherwise keep trying with DOM
+                        if title and description:
+                             # Clean HTML from description if present
+                            if '<' in description:
+                                from bs4 import BeautifulSoup
+                                description = BeautifulSoup(description, 'html.parser').get_text(separator='\n', strip=True)
+                            
+                            return {
+                                'title': title,
+                                'company': company or 'Unknown Company',
+                                'location': location or 'Not specified',
+                                'description': description,
+                                'url': job_url,
+                                'posted': posted,
+                                'skills': [],  # Skills usually not in LD+JSON
+                                'experience': '', 
+                                'salary': '',
+                                'job_type': 'Full-Time'
+                            }
+                except Exception as je:
+                    logger.debug(f"Failed to parse LD+JSON for Naukri: {je}")
+
+            # Step 2: Fallback to DOM parsing with resilient selectors
             # Extract job title
             title_elem = soup.select_one('h1[class*="jd-header-title"]') or \
                          soup.find('h1', class_='jd-header-title') or \
