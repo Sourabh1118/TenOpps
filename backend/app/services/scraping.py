@@ -1362,12 +1362,22 @@ class NaukriScraper(BaseScraper):
         """
         try:
             # Step 1: Try to extract data from structured LD+JSON (most reliable)
-            json_script = soup.find('script', type='application/ld+json')
-            if json_script:
+            # Modern Naukri may have multiple JSON-LD blocks (Breadcrumbs, JobPosting, etc.)
+            json_scripts = soup.find_all('script', type='application/ld+json')
+            for json_script in json_scripts:
                 try:
                     import json
                     ld_data = json.loads(json_script.string)
-                    if ld_data:
+                    # Check if this is the JobPosting block (can be a dict or a list)
+                    if isinstance(ld_data, list):
+                        # Filter for JobPosting within the list
+                        job_posting = next((item for item in ld_data if item.get('@type') == 'JobPosting'), None)
+                        if job_posting:
+                            ld_data = job_posting
+                        else:
+                            continue
+                            
+                    if isinstance(ld_data, dict) and ld_data.get('@type') == 'JobPosting':
                         # Schema.org JobPosting structure
                         title = ld_data.get('title')
                         company = ld_data.get('hiringOrganization', {}).get('name')
@@ -1375,7 +1385,7 @@ class NaukriScraper(BaseScraper):
                         location = ld_data.get('jobLocation', {}).get('address', {}).get('addressLocality', '')
                         posted = ld_data.get('datePosted', '')
                         
-                        # Use these if found, otherwise keep trying with DOM
+                        # Use these if found, otherwise keep trying next scripts or DOM
                         if title and description:
                              # Clean HTML from description if present
                             if '<' in description:
@@ -1389,13 +1399,13 @@ class NaukriScraper(BaseScraper):
                                 'description': description,
                                 'url': job_url,
                                 'posted': posted,
-                                'skills': [],  # Skills usually not in LD+JSON
+                                'skills': [], 
                                 'experience': '', 
                                 'salary': '',
                                 'job_type': 'Full-Time'
                             }
                 except Exception as je:
-                    logger.debug(f"Failed to parse LD+JSON for Naukri: {je}")
+                    logger.debug(f"Failed to parse a candidate LD+JSON for Naukri: {je}")
 
             # Step 2: Fallback to DOM parsing with resilient selectors
             # Extract job title
