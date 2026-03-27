@@ -90,10 +90,40 @@ class BaseScraper(ABC):
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0'
         ]
         
+        # Validation constants matching DB constraints in app/models/job.py
+        self.MIN_TITLE_LENGTH = 10
+        self.MIN_DESCRIPTION_LENGTH = 50
+        self.MAX_TITLE_LENGTH = 200
+        self.MAX_DESCRIPTION_LENGTH = 5000
+        
         logger.info(
             f"Initialized {self.source_name} scraper with "
             f"rate limit: {rate_limit}/{rate_limit_period}s"
         )
+    
+    def _validate_job_data(self, job_data: Dict[str, Any]) -> bool:
+        """
+        Validate job data against database constraints.
+        
+        Returns True if valid, False otherwise.
+        """
+        title = job_data.get('title', '')
+        description = job_data.get('description', '')
+        company = job_data.get('company', '')
+        
+        if len(title) < self.MIN_TITLE_LENGTH:
+            logger.warning(f"Job from {self.source_name} skipped: Title too short ({len(title)} < {self.MIN_TITLE_LENGTH})")
+            return False
+            
+        if len(description) < self.MIN_DESCRIPTION_LENGTH:
+            logger.warning(f"Job from {self.source_name} skipped: Description too short ({len(description)} < {self.MIN_DESCRIPTION_LENGTH})")
+            return False
+            
+        if len(company) < 2:
+            logger.warning(f"Job from {self.source_name} skipped: Company name too short ({len(company)} < 2)")
+            return False
+            
+        return True
     
     def get_browser_headers(self, referer: Optional[str] = None) -> Dict[str, str]:
         """
@@ -1220,7 +1250,7 @@ class NaukriScraper(BaseScraper):
                     
                     # Wait for job detail content to load
                     try:
-                        wait = WebDriverWait(self.driver, 10)
+                        wait = WebDriverWait(self.driver, 15)
                         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section.job-desc, div.jd-container")))
                     except TimeoutException:
                         logger.warning(f"Timeout waiting for Naukri job details at {job_url}")
@@ -1231,8 +1261,12 @@ class NaukriScraper(BaseScraper):
                     # Extract job details
                     job_data = self._parse_job_page(job_soup, job_url)
                     
-                    if job_data:
+                    # Validate against DB constraints before adding to list
+                    if job_data and self._validate_job_data(job_data):
                         jobs.append(job_data)
+                        logger.info(f"Successfully scraped Naukri job: {job_data['title']}")
+                    else:
+                        logger.warning(f"Skipping job from {job_url}: Validation failed (likely incomplete data)")
                     
                 except Exception as e:
                     logger.error(f"Error fetching Naukri job page {job_url}: {e}")
@@ -1627,8 +1661,12 @@ class MonsterScraper(BaseScraper):
                     # Extract job details
                     job_data = self._parse_job_page(job_soup, job_url)
                     
-                    if job_data:
+                    # Validate against DB constraints before adding to list
+                    if job_data and self._validate_job_data(job_data):
                         jobs.append(job_data)
+                        logger.info(f"Successfully scraped Naukri job: {job_data['title']}")
+                    else:
+                        logger.warning(f"Skipping job from {job_url}: Validation failed (likely incomplete data)")
                     
                 except Exception as e:
                     logger.error(f"Error fetching Monster job page {job_url}: {e}")
