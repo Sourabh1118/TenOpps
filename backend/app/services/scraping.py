@@ -130,14 +130,17 @@ class BaseScraper(ABC):
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--proxy-server='direct://'")
         chrome_options.add_argument("--proxy-bypass-list=*")
-        chrome_options.add_argument("--remote-debugging-port=9222")
-        chrome_options.add_argument("--disable-software-rasterizer")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-dbus")
-        chrome_options.add_argument("--disable-accelerated-2d-canvas")
-        chrome_options.add_argument("--no-first-run")
-        chrome_options.add_argument("--no-default-browser-check")
+        # Generate a unique profile directory for this specific run
+        # to prevent cross-talk between concurrent scraper tasks
+        timestamp = int(time.time() * 1000)
+        profile_dir = f"/tmp/chrome_profile_{self.source_name}_{timestamp}"
+        os.makedirs(profile_dir, exist_ok=True)
+        
+        chrome_options.add_argument(f"--user-data-dir={profile_dir}")
         chrome_options.add_argument(f"user-agent={random.choice(self.user_agents)}")
+        
+        # Remove hardcoded port to allow OS to assign dynamic ports for concurrency
+        # chrome_options.add_argument("--remote-debugging-port=9222")
         
         # Redirect Selenium Manager cache to a writable directory (/tmp)
         # to bypass systemd ProtectHome=read-only restrictions
