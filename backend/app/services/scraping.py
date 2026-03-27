@@ -1272,7 +1272,7 @@ class NaukriScraper(BaseScraper):
                     # Wait for job detail content to load
                     try:
                         wait = WebDriverWait(self.driver, 15)
-                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section.job-desc, div.jd-container, h1.jd-header-title")))
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section.job-desc, [class*='job-desc'], [class*='jd-container'], h1[class*='jd-header-title']")))
                     except TimeoutException:
                         logger.warning(f"Timeout waiting for Naukri job details at {job_url}")
                         # Save diagnostic HTML for detail page timeout
