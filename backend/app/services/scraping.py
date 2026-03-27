@@ -1297,35 +1297,50 @@ class NaukriScraper(BaseScraper):
         """
         try:
             # Extract job title
-            title_elem = soup.find('h1', class_='jd-header-title') or soup.find('h1')
+            title_elem = soup.find('h1', class_='jd-header-title') or \
+                         soup.find('h1', class_='title') or \
+                         soup.find('h1', class_='job-title') or \
+                         soup.find('h1')
             title = title_elem.get_text(strip=True) if title_elem else 'Untitled Position'
             
             # Extract company name
-            company_elem = soup.find('a', class_='comp-name') or soup.find('div', class_='comp-name')
+            company_elem = soup.find('a', class_='comp-name') or \
+                           soup.find('div', class_='comp-name') or \
+                           soup.find('a', class_='premium-comp-name') or \
+                           soup.find('div', class_='company-info-container')
             company = company_elem.get_text(strip=True) if company_elem else 'Unknown Company'
             
             # Extract location
-            location_elem = soup.find('span', class_='loc') or soup.find('a', class_='loc')
+            location_elem = soup.find('span', class_='loc') or \
+                            soup.find('a', class_='loc') or \
+                            soup.select_one('span.location')
             location = location_elem.get_text(strip=True) if location_elem else 'Not specified'
             
             # Extract experience
-            experience_elem = soup.find('span', class_='exp')
+            experience_elem = soup.find('span', class_='exp') or \
+                              soup.select_one('span.experience')
             experience = experience_elem.get_text(strip=True) if experience_elem else ''
             
             # Extract salary
-            salary_elem = soup.find('span', class_='sal') or soup.find('div', class_='salary')
+            salary_elem = soup.find('span', class_='sal') or \
+                          soup.find('div', class_='salary') or \
+                          soup.select_one('span.salary')
             salary = salary_elem.get_text(strip=True) if salary_elem else ''
             
             # Extract job description
-            desc_elem = soup.find('div', class_='jd-desc') or soup.find('div', class_='job-desc')
+            desc_elem = soup.find('div', class_='jd-desc') or \
+                        soup.find('div', class_='job-desc') or \
+                        soup.find('section', class_='job-desc') or \
+                        soup.find('div', class_='description')
             description = desc_elem.get_text(strip=True) if desc_elem else ''
             
             # Extract key skills
-            skills_section = soup.find('div', class_='key-skill')
+            skills_section = soup.find('div', class_='key-skill') or \
+                             soup.find('div', class_='skills')
             skills = []
             if skills_section:
-                skill_tags = skills_section.find_all('a')
-                skills = [tag.get_text(strip=True) for tag in skill_tags]
+                skill_tags = skills_section.find_all('a') or skills_section.find_all('span')
+                skills = [tag.get_text(strip=True) for tag in skill_tags if len(tag.get_text(strip=True)) > 1]
             
             # Extract job type (if available)
             job_type_elem = soup.find('span', class_='job-type')
