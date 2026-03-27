@@ -147,6 +147,21 @@ class BaseScraper(ABC):
             headers['Referer'] = referer
         return headers
     
+    def _save_debug_html(self, html: str, name: str):
+        """
+        Save diagnostic HTML to a persistent directory for debugging.
+        """
+        log_dir = "/home/jobplatform/job-platform/backend/logs"
+        os.makedirs(log_dir, exist_ok=True)
+        filename = f"{name}.html"
+        filepath = os.path.join(log_dir, filename)
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(html)
+            logger.info(f"Debug HTML saved to {filepath}")
+        except Exception as e:
+            logger.error(f"Failed to save debug HTML to {filepath}: {str(e)}")
+
     def _init_driver(self) -> webdriver.Chrome:
         """
         Initialize a headless Chrome driver.
@@ -1257,9 +1272,16 @@ class NaukriScraper(BaseScraper):
                     # Wait for job detail content to load
                     try:
                         wait = WebDriverWait(self.driver, 15)
-                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section.job-desc, div.jd-container")))
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section.job-desc, div.jd-container, h1.jd-header-title")))
                     except TimeoutException:
                         logger.warning(f"Timeout waiting for Naukri job details at {job_url}")
+                        # Save diagnostic HTML for detail page timeout
+                        if self.driver:
+                            try:
+                                self._save_debug_html(self.driver.page_source, f"naukri_detail_timeout_{int(time.time()*1000)}")
+                            except:
+                                pass
+                        continue
                     
                     # Parse job page HTML from driver
                     job_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
@@ -1627,13 +1649,9 @@ class MonsterScraper(BaseScraper):
                 time.sleep(2)
             except TimeoutException:
                 # Diagnostic: Save page source to see what Monster is showing
-                try:
-                    debug_path = "/home/jobplatform/job-platform/backend/logs/monster_debug.html"
-                    with open(debug_path, 'w') as f:
-                        f.write(self.driver.page_source)
-                    logger.warning(f"Timed out waiting for Monster job cards. Debug HTML saved to {debug_path}")
-                except:
-                    pass
+                if self.driver:
+                    self._save_debug_html(self.driver.page_source, "monster_search_timeout")
+                logger.warning("Timed out waiting for Monster job cards")
                 return []
             
             # Step 3: Parse the fully rendered HTML
