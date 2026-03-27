@@ -1245,6 +1245,8 @@ class NaukriScraper(BaseScraper):
                     # Wait for rate limit before fetching job page
                     await self.wait_for_rate_limit()
                     
+                    # Random sleep to look more human and avoid throttling
+                    time.sleep(random.uniform(2.0, 5.0))
                     logger.debug(f"Fetching Naukri job page via Selenium: {job_url}")
                     self.driver.get(job_url)
                     
