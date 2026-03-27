@@ -1224,6 +1224,10 @@ class NaukriScraper(BaseScraper):
                 time.sleep(2)
             except TimeoutException:
                 logger.warning("Timed out waiting for Naukri job cards to appear")
+                try:
+                    self._save_debug_html(self.driver.page_source, f"naukri_search_timeout_{int(time.time())}")
+                except:
+                    pass
                 return []
             
             # Step 3: Parse the fully rendered HTML
