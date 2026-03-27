@@ -1382,7 +1382,21 @@ class NaukriScraper(BaseScraper):
                         title = ld_data.get('title')
                         company = ld_data.get('hiringOrganization', {}).get('name')
                         description = ld_data.get('description', '')
-                        location = ld_data.get('jobLocation', {}).get('address', {}).get('addressLocality', '')
+                        
+                        # Handle jobLocation (can be a dict or a list)
+                        location_data = ld_data.get('jobLocation')
+                        location = ''
+                        if isinstance(location_data, list):
+                            localities = []
+                            for loc in location_data:
+                                if isinstance(loc, dict):
+                                    locality = loc.get('address', {}).get('addressLocality')
+                                    if locality:
+                                        localities.append(str(locality))
+                            location = ', '.join(localities)
+                        elif isinstance(location_data, dict):
+                            location = location_data.get('address', {}).get('addressLocality', '')
+                        
                         posted = ld_data.get('datePosted', '')
                         
                         # Use these if found, otherwise keep trying next scripts or DOM
@@ -1529,7 +1543,17 @@ class NaukriScraper(BaseScraper):
         
         # Check if remote
         location = raw_data.get('location', 'Not specified')
+        if isinstance(location, list):
+            location = ', '.join(map(str, location))
+        elif not isinstance(location, str):
+            location = str(location) if location else 'Not specified'
+            
         description = raw_data.get('description', '')
+        if isinstance(description, list):
+            description = '\n'.join(map(str, description))
+        elif not isinstance(description, str):
+            description = str(description) if description else ''
+            
         remote = 'remote' in location.lower() or 'remote' in description.lower()
         
         # Build normalized job dictionary
