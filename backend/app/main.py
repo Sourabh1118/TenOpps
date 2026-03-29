@@ -292,9 +292,7 @@ async def get_csrf_token(authorization: str = None):
 # Register API routers
 from app.api.auth import router as auth_router
 from app.api.subscription import router as subscription_router
-from app.api.jobs import router as jobs_router
 from app.api.url_import import router as url_import_router
-from app.api.search import router as search_router
 from app.api.applications import router as applications_router
 from app.api.admin import router as admin_router
 from app.api.analytics import router as analytics_router
@@ -303,7 +301,6 @@ from app.api.privacy import router as privacy_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(subscription_router, prefix="/api")
-app.include_router(search_router, prefix="/api")
 app.include_router(url_import_router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
 app.include_router(applications_router, prefix="/api")

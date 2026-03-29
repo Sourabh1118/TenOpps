@@ -33,6 +33,8 @@ from app.schemas.job import (
 from app.services.subscription import check_quota, consume_quota
 from app.services.quality_scoring import calculate_quality_score
 from app.services.analytics import AnalyticsService
+from app.services.search import SearchService
+from app.schemas.search import SearchFilters
 from app.core.logging import logger
 
 
@@ -198,6 +200,100 @@ async def create_direct_job(
         job_id=new_job.id,
         message="Job posted successfully"
     )
+
+
+@router.get(
+    "/search",
+    tags=["search"]
+)
+async def search_jobs(
+    query: Optional[str] = Query(None, max_length=200, description="Full-text search query"),
+    location: Optional[str] = Query(None, max_length=200, description="Job location filter"),
+    jobType: Optional[List[JobType]] = Query(None, description="Job type filters"),
+    experienceLevel: Optional[List[ExperienceLevel]] = Query(None, description="Experience level filters"),
+    salaryMin: Optional[int] = Query(None, ge=0, description="Minimum salary filter"),
+    salaryMax: Optional[int] = Query(None, ge=0, description="Maximum salary filter"),
+    remote: Optional[bool] = Query(None, description="Remote jobs only"),
+    postedWithin: Optional[int] = Query(None, ge=1, le=365, description="Posted within days"),
+    sourceType: Optional[List[SourceType]] = Query(None, description="Source type filters"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Results per page"),
+    db: Session = Depends(get_db)
+):
+    """
+    Search jobs with filters and pagination.
+    
+    Supports full-text search on job titles and descriptions, along with
+    multiple filters that can be combined. Results are sorted by featured
+    status, quality score, and posting date.
+    """
+    # Create search filters from query parameters
+    filters = SearchFilters(
+        query=query,
+        location=location,
+        jobType=jobType,
+        experienceLevel=experienceLevel,
+        salaryMin=salaryMin,
+        salaryMax=salaryMax,
+        remote=remote,
+        postedWithin=postedWithin,
+        sourceType=sourceType
+    )
+    
+    # Execute search
+    search_service = SearchService(db)
+    results = search_service.search_jobs(filters, page=page, page_size=page_size)
+    
+    # Track search analytics
+    try:
+        analytics = AnalyticsService(db)
+        analytics.track_search(
+            query_text=query,
+            result_count=results["total"],
+            location=location,
+            filters_applied={
+                "jobType": [jt.value for jt in jobType] if jobType else None,
+                "experienceLevel": [el.value for el in experienceLevel] if experienceLevel else None,
+                "salaryMin": salaryMin,
+                "salaryMax": salaryMax,
+                "remote": remote,
+                "postedWithin": postedWithin,
+                "sourceType": [st.value for st in sourceType] if sourceType else None,
+            },
+        )
+    except Exception as e:
+        logger.error(f"Error tracking search analytics: {e}")
+    
+    # Convert Job objects to dictionaries for JSON response
+    return {
+        "jobs": [
+            {
+                "id": str(job.id),
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "remote": job.remote,
+                "jobType": job.job_type.value,
+                "experienceLevel": job.experience_level.value,
+                "description": job.description,
+                "salaryMin": job.salary_min,
+                "salaryMax": job.salary_max,
+                "salaryCurrency": job.salary_currency,
+                "sourceType": job.source_type.value,
+                "sourceUrl": job.source_url,
+                "qualityScore": job.quality_score,
+                "postedAt": job.posted_at.isoformat() + "Z",
+                "expiresAt": job.expires_at.isoformat() + "Z",
+                "featured": job.featured,
+                "tags": job.tags
+            }
+            for job in results["jobs"]
+        ],
+        "total": results["total"],
+        "page": results["page"],
+        "pageSize": results["page_size"],
+        "totalPages": results["total_pages"]
+    }
 
 
 @router.get(

@@ -44,7 +44,17 @@ export function JobCard({ job }: JobCardProps) {
 
   const qualityBadge = getQualityBadge()
   const salary = formatSalary()
-  const postedAgo = formatDistanceToNow(new Date(job.postedAt), { addSuffix: true })
+  
+  // Safely parse date to avoid RangeError
+  let posted_ago = 'Recently'
+  try {
+    const date = new Date(job.postedAt)
+    if (!isNaN(date.getTime())) {
+      posted_ago = formatDistanceToNow(date, { addSuffix: true })
+    }
+  } catch (e) {
+    console.error('Error parsing date:', e)
+  }
 
   return (
     <Link href={`/jobs/${job.id}`}>
@@ -103,7 +113,7 @@ export function JobCard({ job }: JobCardProps) {
         {/* Footer */}
         <div className="flex items-center justify-between pt-4 border-t border-gray-100">
           <div className="flex items-center gap-3 text-sm text-gray-500">
-            <span>{postedAgo}</span>
+            <span>{posted_ago}</span>
             {job.applicationCount !== undefined && job.applicationCount > 0 && (
               <span>• {job.applicationCount} applicants</span>
             )}
