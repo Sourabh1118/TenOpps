@@ -303,9 +303,9 @@ from app.api.privacy import router as privacy_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(subscription_router, prefix="/api")
-app.include_router(jobs_router, prefix="/api")
-app.include_router(url_import_router, prefix="/api")
 app.include_router(search_router, prefix="/api")
+app.include_router(url_import_router, prefix="/api")
+app.include_router(jobs_router, prefix="/api")
 app.include_router(applications_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")
