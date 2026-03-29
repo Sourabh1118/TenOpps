@@ -18,17 +18,17 @@ export const searchApi = {
   // Search jobs with filters
   searchJobs: async (params: SearchParams): Promise<SearchResponse> => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const response = await apiClient.get<any>('/search/search', {
+    const response = await apiClient.get<any>('/jobs/search', {
       params: {
         query: params.query,
         location: params.location,
-        job_type: params.jobType?.join(','),
-        experience_level: params.experienceLevel?.join(','),
-        salary_min: params.salaryMin,
-        salary_max: params.salaryMax,
+        jobType: params.jobType, // Axios will repeat key for array
+        experienceLevel: params.experienceLevel,
+        salaryMin: params.salaryMin,
+        salaryMax: params.salaryMax,
         remote: params.remote,
-        posted_within: params.postedWithin,
-        source_type: params.sourceType?.join(','),
+        postedWithin: params.postedWithin,
+        sourceType: params.sourceType,
         page: params.page || 1,
         page_size: params.page_size || 20,
       },
