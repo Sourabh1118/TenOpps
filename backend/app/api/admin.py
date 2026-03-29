@@ -638,12 +638,20 @@ async def get_scraping_status(
         raise HTTPException(status_code=500, detail="Failed to retrieve scraping status")
 
 
+class TriggerScrapeRequest(BaseModel):
+    provider: Optional[str] = None
+    api_key: Optional[str] = None
+    query: Optional[str] = None
+    location: Optional[str] = None
+    search_url: Optional[str] = None
+
 @router.post("/scraping/trigger/{source}", summary="Manually trigger a scraping job")
 async def trigger_scraping(
     source: str,
+    body: Optional[TriggerScrapeRequest] = None,
     admin: TokenData = Depends(get_current_admin)
 ):
-    """Manually trigger a Celery scraping task for a given source."""
+    """Manually trigger a Celery scraping task for a given source with optional config."""
     if source not in SCRAPING_SOURCES:
         raise HTTPException(status_code=400, detail=f"Unknown source '{source}'. Valid: {SCRAPING_SOURCES}")
     try:
@@ -656,9 +664,19 @@ async def trigger_scraping(
             "naukri": scrape_naukri_jobs,
             "monster": scrape_monster_jobs,
         }
-        task = task_map[source].delay()
-        logger.info(f"Admin {admin.user_id} triggered manual scrape for {source}, task_id={task.id}")
-        return {"message": f"Scraping task for '{source}' queued", "task_id": task.id}
+        
+        # Prepare scraper configuration from request body
+        scraper_config = {}
+        if body:
+            scraper_config = body.dict(exclude_none=True)
+            
+        task = task_map[source].delay(scraper_config)
+        logger.info(f"Admin {admin.user_id} triggered manual scrape for {source} via {scraper_config.get('provider', 'default')}, task_id={task.id}")
+        return {
+            "message": f"Scraping task for '{source}' queued", 
+            "task_id": task.id,
+            "provider": scraper_config.get('provider', 'default')
+        }
     except Exception as e:
         logger.error(f"Error triggering scrape for {source}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to trigger scraping: {str(e)}")

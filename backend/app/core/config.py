@@ -54,6 +54,21 @@ class Settings(BaseSettings):
     SCRAPING_RATE_LIMIT_INDEED: int = 20
     SCRAPING_RATE_LIMIT_NAUKRI: int = 5
     SCRAPING_RATE_LIMIT_MONSTER: int = 5
+    SCRAPE_DO_TOKEN: str = ""
+    
+    # Provider API Keys
+    SCRAPER_API_KEY: str = ""
+    SCRAPING_BEE_KEY: str = ""
+    DECODO_API_TOKEN: str = ""
+    BRIGHT_DATA_API_KEY: str = ""
+    BRIGHT_DATA_ZONE: str = ""
+    DIFFBOT_TOKEN: str = ""
+    PARSEHUB_API_KEY: str = ""
+    PARSEHUB_PROJECT_ID: str = ""
+    BROWSE_AI_API_KEY: str = ""
+    BROWSE_AI_ROBOT_ID: str = ""
+    SCRAPE_STORM_API_KEY: str = ""
+    DATABAR_API_KEY: str = ""
     
     # File Storage
     STORAGE_BACKEND: str = "local"
@@ -103,6 +118,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 
 # Global settings instance

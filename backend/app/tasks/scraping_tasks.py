@@ -11,7 +11,7 @@ Implements Requirements 1.8, 15.2, 15.3:
 """
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from celery import Task
 from app.tasks.celery_app import celery_app
 from app.core.logging import logger
@@ -111,7 +111,7 @@ class CircuitBreaker:
         # )
 
 
-def run_async_scraping(source_platform: str, scraper_config: Dict[str, Any] = None) -> Dict[str, Any]:
+def run_async_scraping(source_platform: str, scraper_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Helper function to run async scraping in sync Celery task.
     
@@ -179,7 +179,7 @@ def run_async_scraping(source_platform: str, scraper_config: Dict[str, Any] = No
 
 
 @celery_app.task(base=ScrapingTask, bind=True, name="app.tasks.scraping_tasks.scrape_linkedin_jobs")
-def scrape_linkedin_jobs(self):
+def scrape_linkedin_jobs(self, scraper_config: Optional[Dict[str, Any]] = None):
     """
     Scrape jobs from LinkedIn RSS feeds.
     
@@ -210,7 +210,7 @@ def scrape_linkedin_jobs(self):
     
     try:
         # Run scraping
-        result = run_async_scraping(source)
+        result = run_async_scraping(source, scraper_config)
         
         if result['success']:
             # Reset failure count on success
@@ -262,7 +262,7 @@ def scrape_linkedin_jobs(self):
 
 
 @celery_app.task(base=ScrapingTask, bind=True, name="app.tasks.scraping_tasks.scrape_indeed_jobs")
-def scrape_indeed_jobs(self):
+def scrape_indeed_jobs(self, scraper_config: Optional[Dict[str, Any]] = None):
     """
     Scrape jobs from Indeed API.
     
@@ -293,7 +293,7 @@ def scrape_indeed_jobs(self):
     
     try:
         # Run scraping
-        result = run_async_scraping(source)
+        result = run_async_scraping(source, scraper_config)
         
         if result['success']:
             # Reset failure count on success
@@ -345,7 +345,7 @@ def scrape_indeed_jobs(self):
 
 
 @celery_app.task(base=ScrapingTask, bind=True, name="app.tasks.scraping_tasks.scrape_naukri_jobs")
-def scrape_naukri_jobs(self):
+def scrape_naukri_jobs(self, scraper_config: Optional[Dict[str, Any]] = None):
     """
     Scrape jobs from Naukri via web scraping.
     
@@ -376,7 +376,7 @@ def scrape_naukri_jobs(self):
     
     try:
         # Run scraping
-        result = run_async_scraping(source)
+        result = run_async_scraping(source, scraper_config)
         
         if result['success']:
             # Reset failure count on success
@@ -428,7 +428,7 @@ def scrape_naukri_jobs(self):
 
 
 @celery_app.task(base=ScrapingTask, bind=True, name="app.tasks.scraping_tasks.scrape_monster_jobs")
-def scrape_monster_jobs(self):
+def scrape_monster_jobs(self, scraper_config: Optional[Dict[str, Any]] = None):
     """
     Scrape jobs from Monster via web scraping.
     
@@ -459,7 +459,7 @@ def scrape_monster_jobs(self):
     
     try:
         # Run scraping
-        result = run_async_scraping(source)
+        result = run_async_scraping(source, scraper_config)
         
         if result['success']:
             # Reset failure count on success
@@ -622,11 +622,11 @@ def import_job_from_url(self, employer_id: str, url: str):
         if platform == 'linkedin':
             scraper = LinkedInScraper(rss_feed_url="", rate_limit=10)
         elif platform == 'indeed':
-            scraper = IndeedScraper(api_key=settings.INDEED_API_KEY or "", query="", rate_limit=20)
+            scraper = IndeedScraper(api_key=settings.SCRAPE_DO_TOKEN or "", query="", rate_limit=20)
         elif platform == 'naukri':
             scraper = NaukriScraper(search_url="", rate_limit=5)
         elif platform == 'monster':
-            scraper = MonsterScraper(search_url="", rate_limit=5)
+            scraper = MonsterScraper(api_key=settings.SCRAPE_DO_TOKEN or "", query="", rate_limit=5)
         
         if not scraper:
             error = f"No scraper available for platform: {platform}"

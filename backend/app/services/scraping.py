@@ -22,7 +22,14 @@ import re
 from datetime import datetime, timedelta
 
 # Selenium for JavaScript-rendered sites (Requirement 1.3)
-from selenium import webdriver
+try:
+    import undetected_chromedriver as uc
+    from selenium import webdriver
+    HAS_UC = True
+except ImportError:
+    from selenium import webdriver
+    HAS_UC = False
+
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -36,6 +43,154 @@ from app.core.redis import redis_client
 from app.models.job import Job, JobType, ExperienceLevel, SourceType
 from app.models.scraping_task import TaskType, TaskStatus
 from app.services.robots_compliance import check_robots_compliance, get_crawl_delay
+from app.core.config import settings
+
+class ScrapingProvider(str, Enum):
+    SCRAPE_DO = "scrape_do"
+    SCRAPER_API = "scraper_api"
+    SCRAPING_BEE = "scraping_bee"
+    DECODO = "decodo"
+    BRIGHT_DATA = "bright_data"
+    DIFFBOT = "diffbot"
+    PARSEHUB = "parsehub"
+    BROWSE_AI = "browse_ai"
+    SCRAPE_STORM = "scrape_storm"
+    DATABAR = "databar"
+    SELENIUM = "selenium"  # Fallback
+    DIRECT = "direct"      # Standard requests
+
+class ProviderTransport:
+    """Unified handler for various scraping providers."""
+    
+    @staticmethod
+    async def fetch(url: str, provider: ScrapingProvider, render: bool = False, super_proxy: bool = False, source_name: str = "", api_key: Optional[str] = None) -> str:
+        """Fetch content using the specified provider."""
+        logger.info(f"Fetching {url} via {provider.value} (render={render}, super={super_proxy})")
+        
+        try:
+            if provider == ScrapingProvider.SCRAPE_DO:
+                token = settings.SCRAPE_DO_TOKEN
+                if not token: return ""
+                render_param = "&render=true" if render else ""
+                super_param = "&super=true" if super_proxy else ""
+                proxy_url = f"https://api.scrape.do?token={token}&url={urllib.parse.quote(url)}{render_param}{super_param}"
+                response = requests.get(proxy_url, timeout=60 if render else 30)
+                return response.text if response.status_code == 200 else ""
+                
+            elif provider == ScrapingProvider.SCRAPER_API:
+                key = settings.SCRAPER_API_KEY
+                if not key: return ""
+                payload = {'api_key': key, 'url': url, 'render': str(render).lower()}
+                response = requests.get('http://api.scraperapi.com/', params=payload, timeout=60)
+                return response.text if response.status_code == 200 else ""
+                
+            elif provider == ScrapingProvider.SCRAPING_BEE:
+                key = settings.SCRAPING_BEE_KEY
+                if not key: return ""
+                payload = {'api_key': key, 'url': url, 'render_js': str(render).lower()}
+                response = requests.get('https://app.scrapingbee.com/api/v1/', params=payload, timeout=60)
+                return response.text if response.status_code == 200 else ""
+
+            elif provider == ScrapingProvider.DIFFBOT:
+                token = settings.DIFFBOT_TOKEN
+                if not token: return ""
+                # Diffbot Job API is specialized; for now we return raw HTML via their Extract API
+                proxy_url = f"https://api.diffbot.com/v3/analyze?token={token}&url={urllib.parse.quote(url)}"
+                response = requests.get(proxy_url, timeout=60)
+                return response.text if response.status_code == 200 else ""
+                
+            elif provider == ScrapingProvider.DECODO:
+                token = settings.DECODO_API_TOKEN
+                if not token: return ""
+                payload = {'token': token, 'url': url, 'render': str(render).lower()}
+                response = requests.get('https://api.decodo.com/v1/scraper', params=payload, timeout=60)
+                return response.text if response.status_code == 200 else ""
+                
+            elif provider == ScrapingProvider.BRIGHT_DATA:
+                key = settings.BRIGHT_DATA_API_KEY
+                zone = settings.BRIGHT_DATA_ZONE
+                if not key or not zone: return ""
+                headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+                payload = {"url": url, "zone": zone, "format": "raw"}
+                response = requests.post("https://api.brightdata.com/request", headers=headers, json=payload, timeout=60)
+                return response.text if response.status_code == 200 else ""
+
+            elif provider == ScrapingProvider.DATABAR:
+                key = settings.DATABAR_API_KEY
+                if not key: return ""
+                # Databar usually enrichment-based, but handles direct extraction via API
+                headers = {"x-apikey": key}
+                response = requests.get(url, headers=headers, timeout=30)
+                return response.text if response.status_code == 200 else ""
+                
+            # Async / Task-based providers (ParseHub, Browse AI) require polling
+            if provider in [ScrapingProvider.PARSEHUB, ScrapingProvider.BROWSE_AI]:
+                # We use a helper method for these to keep fetch() cleaner
+                # Note: This is an async call to a potentially long-running process.
+                return await ProviderTransport._fetch_async_task(url, provider, api_key)
+            
+            return ""
+        except Exception as e:
+            logger.error(f"Provider {provider.value} error: {e}")
+            return ""
+
+    @staticmethod
+    async def _fetch_async_task(url: str, provider: ScrapingProvider, api_key: Optional[str] = None) -> str:
+        """Handle providers that require a task trigger and polling (ParseHub, Browse AI)."""
+        try:
+            if provider == ScrapingProvider.PARSEHUB:
+                key = api_key or settings.PARSEHUB_API_KEY
+                project_id = settings.PARSEHUB_PROJECT_ID
+                if not key or not project_id: return ""
+                # Trigger a new run
+                params = {"api_key": key, "start_url": url}
+                response = requests.post(f"https://www.parsehub.com/api/v2/projects/{project_id}/run", data=params, timeout=30)
+                if response.status_code != 200: return ""
+                run_token = response.json().get("run_token")
+                
+                # Poll for completion (Wait up to 2 mins)
+                # In a real production scenario, we might use webhooks instead of polling here.
+                import time
+                for _ in range(24): # 24 * 5s = 120s
+                    time.sleep(5)
+                    status_resp = requests.get(f"https://www.parsehub.com/api/v2/runs/{run_token}", params={"api_key": key})
+                    if status_resp.json().get("status") == "complete":
+                        data_resp = requests.get(f"https://www.parsehub.com/api/v2/runs/{run_token}/data", params={"api_key": key})
+                        return data_resp.text
+                return ""
+
+            elif provider == ScrapingProvider.BROWSE_AI:
+                key = api_key or settings.BROWSE_AI_API_KEY
+                robot_id = settings.BROWSE_AI_ROBOT_ID
+                if not key or not robot_id: return ""
+                headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+                payload = {"inputParameters": {"originUrl": url}}
+                response = requests.post(f"https://api.browse.ai/v2/robots/{robot_id}/tasks", headers=headers, json=payload, timeout=30)
+                if response.status_code != 201: return ""
+                task_id = response.json().get("result", {}).get("id")
+                
+                # Poll for completion
+                import time
+                for _ in range(24):
+                    time.sleep(5)
+                    status_resp = requests.get(f"https://api.browse.ai/v2/robots/{robot_id}/tasks/{task_id}", headers=headers)
+                    task_status = status_resp.json().get("result", {}).get("status")
+                    if task_status == "successful":
+                        # In Browse AI, result is often in the task status response or a separate captures endpoint
+                        return str(status_resp.json().get("result", {}).get("capturedLists", {}))
+                return ""
+            
+            elif provider == ScrapingProvider.SCRAPE_STORM:
+                key = api_key or settings.SCRAPE_STORM_API_KEY
+                if not key: return ""
+                # ScrapeStorm often uses a task-based approach via their API
+                # Triggering a task usually requires a taskId
+                return ""
+
+            return ""
+        except Exception as e:
+            logger.error(f"Async provider {provider.value} error: {e}")
+            return ""
 
 
 class RateLimitExceeded(Exception):
@@ -65,7 +220,9 @@ class BaseScraper(ABC):
         self,
         source_name: str,
         rate_limit: int,
-        rate_limit_period: int = 60
+        rate_limit_period: int = 60,
+        provider: ScrapingProvider = ScrapingProvider.SCRAPE_DO,
+        api_key: Optional[str] = None
     ):
         """
         Initialize the base scraper.
@@ -74,10 +231,14 @@ class BaseScraper(ABC):
             source_name: Name of the job source (e.g., "linkedin", "indeed")
             rate_limit: Maximum number of requests per period
             rate_limit_period: Time period in seconds (default: 60)
+            provider: Preferred scraping provider
+            api_key: Optional API key to override settings
         """
         self.source_name = source_name
         self.rate_limit = rate_limit
         self.rate_limit_period = rate_limit_period
+        self.preferred_provider = provider
+        self.provider_api_key = api_key
         self.max_retries = 3
         self.base_backoff_delay = 5  # seconds
         self.session = requests.Session()
@@ -162,10 +323,28 @@ class BaseScraper(ABC):
         except Exception as e:
             logger.error(f"Failed to save debug HTML to {filepath}: {str(e)}")
 
-    def _init_driver(self) -> webdriver.Chrome:
+    def _init_driver(self, stealth: bool = False) -> webdriver.Chrome:
         """
-        Initialize a headless Chrome driver.
+        Initialize a headless Chrome driver (stealthy if requested).
         """
+        if stealth and HAS_UC:
+            logger.info(f"Initializing UNDETECTED chrome driver for {self.source_name}")
+            options = uc.ChromeOptions()
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            
+            # Use Xvfb windowed mode if DISPLAY is available
+            use_headless = not os.environ.get('DISPLAY')
+            
+            try:
+                # Force version 146 to match server's Chrome
+                driver = uc.Chrome(options=options, headless=use_headless, version_main=146)
+                return driver
+            except Exception as e:
+                logger.error(f"Failed to init UC driver, falling back to standard: {e}")
+        
+        # Standard Selenium fallback
         chrome_options = Options()
         chrome_options.add_argument("--headless=new")  # Use the newer headless mode
         chrome_options.add_argument("--no-sandbox")
@@ -198,6 +377,56 @@ class BaseScraper(ABC):
             logger.error(f"Failed to initialize Selenium driver: {e}")
             raise ScrapingError(f"Selenium initialization failed: {e}")
 
+    async def _get_page_content(self, url: str, render: bool = False, super_proxy: bool = False, provider: Optional[ScrapingProvider] = None) -> str:
+        """
+        Fetch page content using a specific provider or the default system choice.
+        """
+        # Determine provider: argument > constructor > default
+        selected_provider = provider or self.preferred_provider
+        
+        # 1. Try specified provider
+        html = await ProviderTransport.fetch(
+            url=url, 
+            provider=selected_provider, 
+            render=render, 
+            super_proxy=super_proxy,
+            source_name=self.source_name,
+            api_key=self.provider_api_key
+        )
+        
+        if html:
+            return html
+            
+        # 2. Fallback to Scrape.do if not already tried
+        if selected_provider != ScrapingProvider.SCRAPE_DO:
+            logger.info(f"Falling back to Scrape.do for {url}")
+            html = await ProviderTransport.fetch(
+                url=url,
+                provider=ScrapingProvider.SCRAPE_DO,
+                render=render,
+                super_proxy=super_proxy,
+                source_name=self.source_name,
+                api_key=self.provider_api_key if selected_provider == ScrapingProvider.SCRAPE_DO else None
+            )
+            if html: return html
+
+        # 3. Last resort: Selenium fallback
+        if not self.driver:
+            self.driver = self._init_driver(stealth=True)
+            
+        if self.driver:
+            logger.info(f"Fetching {url} via Selenium fallback")
+            try:
+                self.driver.get(url)
+                # Wait for specific content based on source
+                wait_time = 15 if render else 5
+                await asyncio.sleep(wait_time)
+                return self.driver.page_source
+            except Exception as e:
+                logger.error(f"Selenium fallback failed: {e}")
+                
+        return ""
+
     def _close_driver(self):
         """
         Safely close the Selenium driver.
@@ -208,7 +437,7 @@ class BaseScraper(ABC):
                 self.driver = None
             except Exception as e:
                 logger.warning(f"Error closing Selenium driver: {e}")
-    
+
     @abstractmethod
     async def scrape(self) -> List[Dict[str, Any]]:
         """
@@ -716,15 +945,17 @@ class LinkedInScraper(BaseScraper):
     - Handles pagination if available
     """
     
-    def __init__(self, rss_feed_url: str, rate_limit: int = 10):
+    def __init__(self, rss_feed_url: str, provider: ScrapingProvider = ScrapingProvider.DIRECT, api_key: Optional[str] = None, rate_limit: int = 10):
         """
         Initialize LinkedIn scraper.
         
         Args:
             rss_feed_url: LinkedIn search results URL (legacy parameter name kept for compatibility)
+            provider: Preferred scraping provider (default: direct for RSS)
+            api_key: Optional API key override
             rate_limit: Maximum requests per minute (default: 10)
         """
-        super().__init__(source_name="linkedin", rate_limit=rate_limit)
+        super().__init__(source_name="linkedin", rate_limit=rate_limit, provider=provider, api_key=api_key)
         self.search_url = rss_feed_url
         self.base_url = "https://www.linkedin.com"
         logger.info(f"Initialized LinkedIn HTML scraper for URL: {self.search_url}")
@@ -968,1116 +1199,319 @@ class LinkedInScraper(BaseScraper):
         
         logger.debug(f"Normalized LinkedIn job: {normalized['title']} at {normalized['company']}")
         return normalized
-
-
 class IndeedScraper(BaseScraper):
-    """
-    Indeed web scraper using BeautifulSoup4.
-    
-    Implements Requirements 1.2, 1.5:
-    - Fetches jobs from Indeed public job search
-    - Handles bot-detection headers
-    - Normalizes Indeed data to standard schema
-    """
-    
-    def __init__(self, api_key: str, query: str, location: str = "", rate_limit: int = 15):
-        super().__init__(source_name="indeed", rate_limit=rate_limit)
+    """Indeed web scraper using BeautifulSoup4 and Scrape.do API."""
+    def __init__(self, query: str, location: str = "", provider: ScrapingProvider = ScrapingProvider.SCRAPE_DO, api_key: Optional[str] = None, rate_limit: int = 15):
+        super().__init__(source_name="indeed", rate_limit=rate_limit, provider=provider, api_key=api_key)
         self.query = query
         self.location = location
         self.base_url = "https://www.indeed.com/jobs"
         self.base_host = "https://www.indeed.com"
-        logger.info(f"Initialized Indeed scraper with query='{query}', location='{location}'")
-    
+        logger.info(f"Initialized Indeed scraper with {self.preferred_provider.value} provider")
+
     async def scrape(self) -> List[Dict[str, Any]]:
-        """
-        Scrape jobs from Indeed search results.
-        
-        Implements Requirement 1.2:
-        - Fetches jobs from Indeed HTML page
-        - Parses job data from search results snippet
-        
-        Returns:
-            List of raw job dictionaries from Indeed
-            
-        Raises:
-            ScrapingError: If fetching or parsing fails
-        """
         try:
-            params = {
-                'q': self.query,
-                'l': self.location,
-                'fromage': '1', # Last 24 hours
-            }
+            params = {'q': self.query, 'l': self.location, 'fromage': '1'}
             search_url = f"{self.base_url}?{urllib.parse.urlencode(params)}"
+            html = await self._get_page_content(search_url)
+            if not html: return []
+            soup = BeautifulSoup(html, 'html.parser')
             
-            logger.info(f"Fetching Indeed jobs using Selenium from: {search_url}")
+            # Selectors for job links on Indeed search page
+            selectors = [
+                'a[data-jk]',
+                'a.jcs-JobTitle',
+                'a[class*="jcs-JobTitle"]',
+                'h2.jobTitle a',
+                'div.job_seen_beacon a[data-jk]'
+            ]
             
-            # Step 1: Initialize driver and fetch page
-            self.driver = self._init_driver()
-            if not self.driver:
-                raise ScrapingError("Failed to initialize Selenium driver")
-                
-            self.driver.get(search_url)
+            job_links = []
+            for selector in selectors:
+                found = soup.select(selector)
+                if found:
+                    job_links.extend(found)
             
-            # Step 2: Wait for job cards to appear
-            try:
-                wait = WebDriverWait(self.driver, 20)
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.job_seen_beacon, td.resultContent, div.cardOutline")))
-                # Extra wait for stability
-                time.sleep(2)
-            except TimeoutException:
-                # Diagnostic: Save page source to see what Indeed is showing
-                try:
-                    debug_path = "/home/jobplatform/job-platform/backend/logs/indeed_debug.html"
-                    with open(debug_path, 'w') as f:
-                        f.write(self.driver.page_source)
-                    logger.warning(f"Timed out waiting for Indeed job cards. Debug HTML saved to {debug_path}")
-                except:
-                    pass
-                return []
+            # Remove duplicates while preserving order
+            unique_links = []
+            seen_jks = set()
+            for link in job_links:
+                jk = link.get('data-jk')
+                if not jk:
+                    href = link.get('href', '')
+                    match = re.search(r'jk=([a-f0-9]+)', href)
+                    if match: jk = match.group(1)
+                if jk and jk not in seen_jks:
+                    unique_links.append(link)
+                    seen_jks.add(jk)
             
-            # Step 3: Parse the fully rendered HTML
-            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            logger.info(f"Indeed found {len(unique_links)} unique job links using selectors. Soup length: {len(str(soup))}")
+            if not unique_links:
+                logger.debug(f"Indeed soup snippet: {str(soup)[:1000]}")
             
-            # Target common Indeed job card containers
-            job_cards = soup.find_all('div', class_='job_seen_beacon') or \
-                        soup.find_all('td', class_='resultContent') or \
-                        soup.find_all('div', class_='cardOutline') or \
-                        soup.find_all('li', class_='eu4oa1w0') # Recent Indeed structure
-            
-            if not job_cards:
-                # Fallback to broader list items if specific cards aren't found
-                job_cards = soup.select('ul.jobsearch-ResultsList > li')
-                
-            if not job_cards:
-                logger.warning("No job cards found on Indeed. Site structure might have changed or bot detection triggered.")
-                return []
-            
-            logger.info(f"Found {len(job_cards)} job cards on Indeed")
-            
-            jobs = []
-            for card in job_cards:
-                try:
-                    # Extract title and link
-                    title_anchor = card.find('a', class_='jcs-JobTitle') or \
-                                  card.find('h2', class_='jobTitle').find('a') if card.find('h2', class_='jobTitle') else None
-                    
-                    if not title_anchor:
-                        continue
-                        
-                    title = title_anchor.get_text(strip=True)
-                    url = title_anchor.get('href', '')
-                    if url and not url.startswith('http'):
-                        url = 'https://www.indeed.com' + url
-                    
-                    # Extract company
-                    company_elem = card.find('span', {'data-testid': 'company-name'}) or \
-                                  card.find('span', class_='companyName') or \
-                                  card.find('div', class_='companyName')
-                    company = company_elem.get_text(strip=True) if company_elem else 'Unknown'
-                    
-                    # Extract location
-                    location_elem = card.find('div', {'data-testid': 'text-location'}) or \
-                                   card.find('div', class_='companyLocation')
-                    location = location_elem.get_text(strip=True) if location_elem else 'Not specified'
-                    
-                    # Extract snippet
-                    snippet_elem = card.find('div', class_='job-snippet') or \
-                                  card.find('table', class_='jobCardShelfContainer')
-                    snippet = snippet_elem.get_text(strip=True) if snippet_elem else ''
-                    
-                    # Extract date
-                    date_elem = card.find('span', class_='date') or \
-                                card.find('span', {'data-testid': 'myJobsStateDate'})
-                    date_text = date_elem.get_text(strip=True) if date_elem else ''
-                    
-                    jobs.append({
-                        'title': title,
-                        'company': company,
-                        'location': location,
-                        'url': url,
-                        'snippet': snippet,
-                        'date_text': date_text
-                    })
-                except Exception as e:
-                    logger.debug(f"Error parsing Indeed job card: {e}")
-                    continue
-                    
-            logger.info(f"Successfully extracted {len(jobs)} jobs from Indeed HTML")
-            return jobs
-            
-        except ScrapingError:
-            raise
+            job_urls = []
+            for link in unique_links[:15]:
+                jk = link.get("data-jk")
+                if not jk:
+                    href = link.get("href", "")
+                    match = re.search(r"jk=([a-f0-9]+)", href)
+                    if match: jk = match.group(1)
+                if jk:
+                    url = f"{self.base_host}/viewjob?jk={jk}"
+                    if url not in job_urls: job_urls.append(url)
+
+            logger.info(f"Found {len(job_urls)} Indeed job URLs")
+            all_jobs = []
+            for job_url in job_urls:
+                data = await self._parse_job_page(job_url)
+                if data: all_jobs.append(data)
+                await asyncio.sleep(1)
+            return all_jobs
+            return all_jobs
         except Exception as e:
-            error_msg = f"Unexpected error scraping Indeed: {e}"
-            logger.error(error_msg)
-            raise ScrapingError(error_msg)
-        finally:
-            self._close_driver()
+            logger.error(f"Indeed scraping failed: {e}")
+            return []
+        finally: self._close_driver()
+
+    async def _parse_job_page(self, url: str) -> Optional[Dict[str, Any]]:
+        html = await self._get_page_content(url)
+        if not html: return None
+        soup = BeautifulSoup(html, 'html.parser')
+        job_data = {'link': url}
+        import json
+        for script in soup.find_all('script', type='application/ld+json'):
+            try:
+                data = json.loads(script.string)
+                ld = data if isinstance(data, dict) else (data[0] if isinstance(data, list) and data else {})
+                if ld.get('@type') == 'JobPosting':
+                    desc = ld.get('description', '')
+                    if not isinstance(desc, str):
+                        try: desc = BeautifulSoup(str(desc), 'html.parser').get_text('\n', strip=True)
+                        except: desc = str(desc)
+                    job_data.update({
+                        'title': ld.get('title'),
+                        'company': ld.get('hiringOrganization', {}).get('name'),
+                        'location': ld.get('jobLocation', {}).get('address', {}).get('addressLocality'),
+                        'description': desc,
+                        'published': ld.get('datePosted'),
+                    })
+                    break
+            except: continue
+        if not job_data.get('title'):
+            title_elem = soup.select_one('h1')
+            if title_elem: job_data['title'] = title_elem.get_text(strip=True)
+        return job_data if job_data.get('title') else None
 
     def normalize_job(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convert Indeed HTML format to standard schema.
-        
-        Implements Requirement 1.5:
-        - Maps Indeed HTML fields to standard schema
-        - Parses date from relative text
-        - Sets source_platform to 'indeed'
-        
-        Args:
-            raw_data: Raw job data from Indeed HTML scraping
-            
-        Returns:
-            Normalized job dictionary conforming to Job model schema
-        """
-        
-        # Parse posted date
-        date_text = raw_data.get('date_text', '').lower()
-        posted_at = datetime.utcnow()
-        
-        if 'today' in date_text or 'just' in date_text:
-             posted_at = datetime.utcnow()
-        else:
-             num_match = re.search(r'(\d+)', date_text)
-             if num_match:
-                 num = int(num_match.group(1))
-                 if 'day' in date_text:
-                     posted_at = datetime.utcnow() - timedelta(days=num)
-        
-        # Calculate expiration date
-        expires_at = posted_at + timedelta(days=30)
-        
-        # Experience level from snippet/title
-        text_for_exp = f"{raw_data.get('title', '')} {raw_data.get('snippet', '')}".lower()
-        experience_level = 'Mid Level'
-        if any(term in text_for_exp for term in ['senior', 'sr', 'principal', 'lead']):
-            experience_level = 'Senior'
-        elif any(term in text_for_exp for term in ['junior', 'jr', 'entry', 'intern']):
-            experience_level = 'Entry Level'
-            
-        # Build normalized job dictionary
-        normalized = {
-            'title': raw_data.get('title', 'Untitled Position'),
-            'company': raw_data.get('company', 'Unknown Company'),
-            'location': raw_data.get('location', 'Not specified'),
-            'remote': 'remote' in raw_data.get('location', '').lower() or 'remote' in text_for_exp,
-            'job_type': JobType.FULL_TIME, # Default for Indeed search
-            'experience_level': normalize_experience_level(experience_level),
-            'description': raw_data.get('snippet', 'No description available'),
-            'requirements': None,
-            'responsibilities': None,
-            'salary_min': None,
-            'salary_max': None,
-            'salary_currency': 'USD',
-            'source_type': SourceType.AGGREGATED,
-            'source_url': raw_data.get('url', ''),
+        desc = raw_data.get('description', '')
+        if not isinstance(desc, str): desc = str(desc)
+        loc = raw_data.get('location', 'Remote')
+        posted = datetime.utcnow()
+        try: posted = datetime.fromisoformat(raw_data.get('published', '').split('T')[0])
+        except: pass
+        return {
+            'title': raw_data.get('title', 'Unknown'),
+            'company': raw_data.get('company', 'Unknown'),
+            'location': str(loc),
+            'remote': 'remote' in str(loc).lower() or 'remote' in raw_data.get('title', '').lower(),
+            'job_type': JobType.FULL_TIME,
+            'experience_level': ExperienceLevel.MID,
+            'description': desc,
             'source_platform': 'indeed',
-            'posted_at': posted_at,
-            'expires_at': expires_at,
+            'source_url': raw_data.get('link', ''),
+            'posted_at': posted,
+            'expires_at': posted + timedelta(days=30),
+            'source_type': SourceType.AGGREGATED,
+            'salary_currency': 'USD',
         }
-        
-        logger.debug(f"Normalized Indeed job: {normalized['title']} at {normalized['company']}")
-        return normalized
 
 
 class NaukriScraper(BaseScraper):
-    """
-    Naukri web scraper using BeautifulSoup4.
-    
-    Implements Requirements 1.3, 1.5:
-    - Fetches jobs from Naukri.com via web scraping
-    - Parses HTML using BeautifulSoup4
-    - Extracts job URLs from search results
-    - Fetches individual job pages and parses details
-    - Normalizes Naukri data to standard schema
-    """
-    
-    def __init__(self, search_url: str, rate_limit: int = 5):
-        """
-        Initialize Naukri web scraper.
-        
-        Args:
-            search_url: Naukri search results URL
-            rate_limit: Maximum requests per minute (default: 5)
-        """
-        super().__init__(source_name="naukri", rate_limit=rate_limit)
+    """Naukri web scraper using BeautifulSoup4 and Stealth Selenium."""
+    def __init__(self, search_url: str, provider: ScrapingProvider = ScrapingProvider.SELENIUM, api_key: Optional[str] = None, rate_limit: int = 5):
+        super().__init__(source_name="naukri", rate_limit=rate_limit, provider=provider, api_key=api_key)
         self.search_url = search_url
         self.base_url = "https://www.naukri.com"
-        logger.info(f"Initialized Naukri scraper for URL: {search_url}")
-    
+        logger.info(f"Initialized Naukri scraper for {search_url}")
+
     async def scrape(self) -> List[Dict[str, Any]]:
-        """
-        Scrape jobs from Naukri search results.
-        
-        Implements Requirement 1.3:
-        - Fetches Naukri search results page
-        - Extracts job URLs from search results
-        - Fetches individual job pages
-        - Parses job details from HTML
-        
-        Returns:
-            List of raw job dictionaries from Naukri
-            
-        Raises:
-            ScrapingError: If fetching or parsing fails
-        """
-        
         try:
-            logger.info(f"Fetching Naukri search results using Selenium: {self.search_url}")
-            
-            # Step 1: Initialize driver and fetch page
-            self.driver = self._init_driver()
-            if not self.driver:
-                raise ScrapingError("Failed to initialize Selenium driver for Naukri")
+            self.driver = self._init_driver(stealth=True)
+            if not self.driver: raise ScrapingError("Failed to init driver")
             self.driver.get(self.search_url)
-            
-            # Step 2: Wait for job cards to appear (dynamic content)
             try:
                 wait = WebDriverWait(self.driver, 20)
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.srp-jobtuple-wrapper, article.jobTuple")))
-                # Extra wait for stability
                 time.sleep(2)
-            except TimeoutException:
-                logger.warning("Timed out waiting for Naukri job cards to appear")
-                try:
-                    self._save_debug_html(self.driver.page_source, f"naukri_search_timeout_{int(time.time())}")
-                except:
-                    pass
-                return []
+            except TimeoutException: return []
             
-            # Step 3: Parse the fully rendered HTML
             soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            job_urls = []
+            for card in soup.select('div.srp-jobtuple-wrapper, article.jobTuple'):
+                a = card.select_one('a.title, a.job-title')
+                if a and a.get('href'):
+                    url = a['href']
+                    if not url.startswith('http'): url = self.base_url + url
+                    job_urls.append(url)
             
-            # Extract job URLs from search results
-            job_urls = self._extract_job_urls(soup)
-            
-            if not job_urls:
-                logger.warning("No job URLs found in Naukri search results")
-                return []
-            
-            logger.info(f"Found {len(job_urls)} job URLs in Naukri search results")
-            
-            # Fetch and parse individual job pages
             jobs = []
-            for job_url in job_urls[:20]:  # Limit to 20 jobs per scrape to respect rate limits
+            for url in job_urls[:15]:
                 try:
-                    # Wait for rate limit before fetching job page
                     await self.wait_for_rate_limit()
-                    
-                    # Random sleep to look more human and avoid throttling
-                    time.sleep(random.uniform(2.0, 5.0))
-                    logger.debug(f"Fetching Naukri job page via Selenium: {job_url}")
-                    self.driver.get(job_url)
-                    
-                    # Wait for job detail content to load
-                    try:
-                        wait = WebDriverWait(self.driver, 15)
-                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "section.job-desc, [class*='job-desc'], [class*='jd-container'], h1[class*='jd-header-title']")))
-                    except TimeoutException:
-                        logger.warning(f"Timeout waiting for Naukri job details at {job_url}")
-                        # Save diagnostic HTML for detail page timeout
-                        if self.driver:
-                            try:
-                                self._save_debug_html(self.driver.page_source, f"naukri_detail_timeout_{int(time.time()*1000)}")
-                            except:
-                                pass
-                        continue
-                    
-                    # Parse job page HTML from driver
-                    job_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-                    
-                    # Extract job details
-                    job_data = self._parse_job_page(job_soup, job_url)
-                    
-                    # Validate against DB constraints before adding to list
-                    if job_data and self._validate_job_data(job_data):
-                        jobs.append(job_data)
-                        logger.info(f"Successfully scraped Naukri job: {job_data['title']}")
-                    else:
-                        logger.warning(f"Skipping job from {job_url}: Validation failed (likely incomplete data)")
-                    
+                    time.sleep(random.uniform(2, 4))
+                    self.driver.get(url)
+                    # Simple wait for content
+                    time.sleep(2)
+                    job_data = self._parse_job_page(BeautifulSoup(self.driver.page_source, 'html.parser'), url)
+                    if job_data: jobs.append(job_data)
                 except Exception as e:
-                    logger.error(f"Error fetching Naukri job page {job_url}: {e}")
+                    logger.debug(f"Failed to parse Naukri job page {url}: {e}")
                     continue
-            
-            logger.info(f"Successfully scraped {len(jobs)} jobs from Naukri")
             return jobs
-            
-        except requests.RequestException as e:
-            error_msg = f"Failed to fetch Naukri search results: {e}"
-            logger.error(error_msg)
-            raise ScrapingError(error_msg)
-        except ScrapingError:
-            raise
         except Exception as e:
-            error_msg = f"Unexpected error scraping Naukri: {e}"
-            logger.error(error_msg)
-            raise ScrapingError(error_msg)
-        finally:
-            self._close_driver()
-    
-    def _extract_job_urls(self, soup) -> List[str]:
-        """
-        Extract job URLs from Naukri search results page.
-        
-        Args:
-            soup: BeautifulSoup object of search results page
-            
-        Returns:
-            List of job URLs
-        """
-        job_urls = []
-        
-        # Modern Naukri uses 'srp-jobtuple-wrapper' instead of legacy 'jobTuple'
-        job_cards = soup.select('div.srp-jobtuple-wrapper, article.jobTuple')
-        
-        for card in job_cards:
-            try:
-                # Find the job title link - usually has class 'title'
-                title_link = card.select_one('a.title, a.job-title')
-                if title_link and title_link.get('href'):
-                    job_url = title_link['href']
-                    
-                    # Make absolute URL if relative
-                    if not job_url.startswith('http'):
-                        job_url = self.base_url + job_url
-                    
-                    job_urls.append(job_url)
-            except Exception as e:
-                logger.error(f"Error extracting job URL from card: {e}")
-                continue
-        
-        return job_urls
-    
-    def _parse_job_page(self, soup, job_url: str) -> Optional[Dict[str, Any]]:
-        """
-        Parse job details from Naukri job page.
-        
-        Args:
-            soup: BeautifulSoup object of job page
-            job_url: URL of the job page
-            
-        Returns:
-            Dictionary with job data or None if parsing fails
-        """
-        try:
-            # Step 1: Try to extract data from structured LD+JSON (most reliable)
-            # Modern Naukri may have multiple JSON-LD blocks (Breadcrumbs, JobPosting, etc.)
-            json_scripts = soup.find_all('script', type='application/ld+json')
-            for json_script in json_scripts:
-                try:
-                    import json
-                    ld_data = json.loads(json_script.string)
-                    # Check if this is the JobPosting block (can be a dict or a list)
-                    if isinstance(ld_data, list):
-                        # Filter for JobPosting within the list
-                        job_posting = next((item for item in ld_data if item.get('@type') == 'JobPosting'), None)
-                        if job_posting:
-                            ld_data = job_posting
-                        else:
-                            continue
-                            
-                    if isinstance(ld_data, dict) and ld_data.get('@type') == 'JobPosting':
-                        # Schema.org JobPosting structure
-                        title = ld_data.get('title')
-                        company = ld_data.get('hiringOrganization', {}).get('name')
-                        description = ld_data.get('description', '')
-                        
-                        # Handle jobLocation (can be a dict or a list)
-                        location_data = ld_data.get('jobLocation')
-                        location = ''
-                        if isinstance(location_data, list):
-                            localities = []
-                            for loc in location_data:
-                                if isinstance(loc, dict):
-                                    locality = loc.get('address', {}).get('addressLocality')
-                                    if locality:
-                                        localities.append(str(locality))
-                            location = ', '.join(localities)
-                        elif isinstance(location_data, dict):
-                            location = location_data.get('address', {}).get('addressLocality', '')
-                        
-                        posted = ld_data.get('datePosted', '')
-                        
-                        # Use these if found, otherwise keep trying next scripts or DOM
-                        if title and description:
-                             # Clean HTML from description if present
-                            if '<' in description:
-                                from bs4 import BeautifulSoup
-                                description = BeautifulSoup(description, 'html.parser').get_text(separator='\n', strip=True)
-                            
-                            return {
-                                'title': title,
-                                'company': company or 'Unknown Company',
-                                'location': location or 'Not specified',
-                                'description': description,
-                                'url': job_url,
-                                'posted': posted,
-                                'skills': [], 
-                                'experience': '', 
-                                'salary': '',
-                                'job_type': 'Full-Time'
-                            }
-                except Exception as je:
-                    logger.debug(f"Failed to parse a candidate LD+JSON for Naukri: {je}")
+            logger.error(f"Naukri scraping failed: {e}")
+            return []
+        finally: self._close_driver()
 
-            # Step 2: Fallback to DOM parsing with resilient selectors
-            # Extract job title
-            title_elem = soup.select_one('h1[class*="jd-header-title"]') or \
-                         soup.find('h1', class_='jd-header-title') or \
-                         soup.find('h1', class_='title') or \
-                         soup.find('h1', class_='job-title') or \
-                         soup.find('h1')
-            title = title_elem.get_text(strip=True) if title_elem else 'Untitled Position'
-            
-            # Extract company name
-            company_elem = soup.select_one('[class*="comp-name"]') or \
-                           soup.find('a', class_='comp-name') or \
-                           soup.find('div', class_='comp-name') or \
-                           soup.find('a', class_='premium-comp-name') or \
-                           soup.find('div', class_='company-info-container')
-            company = company_elem.get_text(strip=True) if company_elem else 'Unknown Company'
-            
-            # Extract location
-            location_elem = soup.select_one('[class*="loc"]') or \
-                            soup.find('span', class_='loc') or \
-                            soup.find('a', class_='loc') or \
-                            soup.select_one('span.location')
-            location = location_elem.get_text(strip=True) if location_elem else 'Not specified'
-            
-            # Extract experience
-            experience_elem = soup.select_one('[class*="exp"]') or \
-                              soup.find('span', class_='exp') or \
-                              soup.select_one('span.experience')
-            experience = experience_elem.get_text(strip=True) if experience_elem else ''
-            
-            # Extract salary
-            salary_elem = soup.select_one('[class*="sal"]') or \
-                          soup.find('span', class_='sal') or \
-                          soup.find('div', class_='salary') or \
-                          soup.select_one('span.salary')
-            salary = salary_elem.get_text(strip=True) if salary_elem else ''
-            
-            # Extract job description
-            desc_elem = soup.select_one('[class*="job-desc"]') or \
-                        soup.select_one('[class*="jd-desc"]') or \
-                        soup.find('div', class_='jd-desc') or \
-                        soup.find('div', class_='job-desc') or \
-                        soup.find('section', class_='job-desc') or \
-                        soup.find('div', class_='description')
-            description = desc_elem.get_text(strip=True) if desc_elem else ''
-            
-            # Extract key skills
-            skills_section = soup.find('div', class_='key-skill') or \
-                             soup.find('div', class_='skills')
-            skills = []
-            if skills_section:
-                skill_tags = skills_section.find_all('a') or skills_section.find_all('span')
-                skills = [tag.get_text(strip=True) for tag in skill_tags if len(tag.get_text(strip=True)) > 1]
-            
-            # Extract job type (if available)
-            job_type_elem = soup.find('span', class_='job-type')
-            job_type = job_type_elem.get_text(strip=True) if job_type_elem else 'Full-Time'
-            
-            # Extract posted date
-            posted_elem = soup.find('span', class_='posted') or soup.find('div', class_='posted')
-            posted = posted_elem.get_text(strip=True) if posted_elem else ''
-            
-            job_data = {
-                'title': title,
-                'company': company,
-                'location': location,
-                'experience': experience,
-                'salary': salary,
-                'description': description,
-                'skills': skills,
-                'job_type': job_type,
-                'posted': posted,
-                'url': job_url,
-            }
-            
-            logger.debug(f"Parsed Naukri job: {title} at {company}")
-            return job_data
-            
-        except Exception as e:
-            logger.error(f"Error parsing Naukri job page: {e}")
-            return None
-    
+    def _parse_job_page(self, soup, url: str) -> Optional[Dict[str, Any]]:
+        import json
+        for script in soup.find_all('script', type='application/ld+json'):
+            try:
+                data = json.loads(script.string)
+                ld = data if isinstance(data, dict) else (data[0] if isinstance(data, list) and data else {})
+                if ld.get('@type') == 'JobPosting':
+                    return {
+                        'title': ld.get('title'),
+                        'company': ld.get('hiringOrganization', {}).get('name'),
+                        'location': ld.get('jobLocation', {}).get('address', {}).get('addressLocality'),
+                        'description': ld.get('description'),
+                        'posted': ld.get('datePosted'),
+                        'url': url
+                    }
+            except: continue
+        return None
+
     def normalize_job(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convert Naukri format to standard schema.
-        
-        Implements Requirement 1.5:
-        - Maps Naukri HTML fields to standard schema
-        - Extracts job title, company, location, description
-        - Parses salary information
-        - Extracts experience level from experience field
-        - Sets source_platform to 'naukri'
-        
-        Args:
-            raw_data: Raw job data from Naukri
-            
-        Returns:
-            Normalized job dictionary conforming to Job model schema
-        """
-        from datetime import datetime, timedelta
-        
-        # Parse experience level from experience field
-        experience = raw_data.get('experience', '')
-        experience_level = self._extract_experience_level_from_text(experience)
-        
-        # Normalize experience level
-        experience_level = normalize_experience_level(experience_level)
-        
-        # Parse job type
-        job_type = normalize_job_type(raw_data.get('job_type', 'Full-Time'))
-        
-        # Extract salary info
-        salary_info = extract_salary_info(raw_data.get('salary', ''))
-        
-        # Parse posted date from posted text
-        posted_at = self._parse_posted_date(raw_data.get('posted', ''))
-        
-        # Calculate expiration date (30 days from posting)
-        expires_at = posted_at + timedelta(days=30)
-        
-        # Check if remote
-        location = raw_data.get('location', 'Not specified')
-        if isinstance(location, list):
-            location = ', '.join(map(str, location))
-        elif not isinstance(location, str):
-            location = str(location) if location else 'Not specified'
-            
-        description = raw_data.get('description', '')
-        if isinstance(description, list):
-            description = '\n'.join(map(str, description))
-        elif not isinstance(description, str):
-            description = str(description) if description else ''
-            
-        remote = 'remote' in location.lower() or 'remote' in description.lower()
-        
-        # Build normalized job dictionary
-        normalized = {
-            'title': raw_data.get('title', 'Untitled Position'),
-            'company': raw_data.get('company', 'Unknown Company'),
-            'location': location,
-            'remote': remote,
-            'job_type': job_type,
-            'experience_level': experience_level,
-            'description': description[:5000] if description else 'No description available',
-            'requirements': ', '.join(raw_data.get('skills', [])) if raw_data.get('skills') else None,
-            'responsibilities': None,
-            'salary_min': salary_info.get('salary_min'),
-            'salary_max': salary_info.get('salary_max'),
-            'salary_currency': 'INR',  # Naukri is primarily Indian job site
-            'source_type': SourceType.AGGREGATED,
-            'source_url': raw_data.get('url', ''),
+        dt = datetime.utcnow()
+        try: dt = datetime.fromisoformat(raw_data.get('posted', '').split('T')[0])
+        except: pass
+        return {
+            'title': raw_data.get('title', 'Unknown'),
+            'company': raw_data.get('company', 'Unknown'),
+            'location': str(raw_data.get('location', 'India')),
+            'remote': 'remote' in str(raw_data.get('description', '')).lower(),
+            'job_type': JobType.FULL_TIME,
+            'experience_level': ExperienceLevel.MID,
+            'description': str(raw_data.get('description', '')).replace('\n', ' ')[:5000],
             'source_platform': 'naukri',
-            'posted_at': posted_at,
-            'expires_at': expires_at,
+            'source_url': raw_data.get('url', ''),
+            'posted_at': dt,
+            'expires_at': dt + timedelta(days=30),
+            'source_type': SourceType.AGGREGATED,
+            'salary_currency': 'INR',
         }
-        
-        logger.debug(f"Normalized Naukri job: {normalized['title']} at {normalized['company']}")
-        return normalized
-    
-    def _extract_experience_level_from_text(self, experience_text: str) -> str:
-        """
-        Extract experience level from Naukri experience text.
-        
-        Args:
-            experience_text: Experience text (e.g., "2-5 years", "0-2 years")
-            
-        Returns:
-            Experience level string
-        """
-        if not experience_text:
-            return 'Mid Level'
-        
-        experience_lower = experience_text.lower()
-        
-        # Extract years from text
-        import re
-        years_match = re.search(r'(\d+)', experience_lower)
-        
-        if years_match:
-            min_years = int(years_match.group(1))
-            
-            if min_years == 0 or 'fresher' in experience_lower:
-                return 'Entry Level'
-            elif min_years <= 2:
-                return 'Entry Level'
-            elif min_years <= 4:
-                return 'Mid Level'
-            elif min_years <= 7:
-                return 'Senior'
-            else:
-                return 'Lead'
-        
-        # Check for keywords
-        if any(term in experience_lower for term in ['fresher', 'entry', 'junior']):
-            return 'Entry Level'
-        elif any(term in experience_lower for term in ['senior', 'sr']):
-            return 'Senior'
-        elif any(term in experience_lower for term in ['lead', 'manager', 'director']):
-            return 'Lead'
-        
-        return 'Mid Level'
-    
-    def _parse_posted_date(self, posted_text: str) -> datetime:
-        """
-        Parse posted date from Naukri posted text.
-        
-        Args:
-            posted_text: Posted text (e.g., "Posted 2 days ago", "Just now")
-            
-        Returns:
-            datetime object representing posted date
-        """
-        if not posted_text:
-            return datetime.utcnow()
-        
-        posted_lower = posted_text.lower()
-        
-        # Check for "just now" or "today"
-        if 'just' in posted_lower or 'today' in posted_lower:
-            return datetime.utcnow()
-        
-        # Extract number of days/hours
-        import re
-        
-        # Try to match "X days ago"
-        days_match = re.search(r'(\d+)\s*day', posted_lower)
-        if days_match:
-            days = int(days_match.group(1))
-            return datetime.utcnow() - timedelta(days=days)
-        
-        # Try to match "X hours ago"
-        hours_match = re.search(r'(\d+)\s*hour', posted_lower)
-        if hours_match:
-            hours = int(hours_match.group(1))
-            return datetime.utcnow() - timedelta(hours=hours)
-        
-        # Try to match "X weeks ago"
-        weeks_match = re.search(r'(\d+)\s*week', posted_lower)
-        if weeks_match:
-            weeks = int(weeks_match.group(1))
-            return datetime.utcnow() - timedelta(weeks=weeks)
-        
-        # Default to current time if parsing fails
-        logger.warning(f"Could not parse Naukri posted date '{posted_text}', using current time")
-        return datetime.utcnow()
 
 
 class MonsterScraper(BaseScraper):
-    """
-    Monster web scraper using BeautifulSoup4.
-    
-    Implements Requirements 1.4, 1.5:
-    - Fetches jobs from Monster.com via web scraping
-    - Parses HTML using BeautifulSoup4
-    - Extracts job URLs from search results
-    - Fetches individual job pages and parses details
-    - Normalizes Monster data to standard schema
-    """
-    
-    def __init__(self, search_url: str, rate_limit: int = 5):
-        """
-        Initialize Monster web scraper.
-        
-        Args:
-            search_url: Monster search results URL
-            rate_limit: Maximum requests per minute (default: 5)
-        """
-        super().__init__(source_name="monster", rate_limit=rate_limit)
-        self.search_url = search_url
-        self.base_url = "https://www.monster.com"
-        logger.info(f"Initialized Monster scraper for URL: {search_url}")
-    
+    """Monster web scraper using Scrape.do API."""
+    def __init__(self, query: str = "", location: str = "", provider: ScrapingProvider = ScrapingProvider.SCRAPE_DO, api_key: Optional[str] = None, rate_limit: int = 5):
+        super().__init__(source_name="monster", rate_limit=rate_limit, provider=provider, api_key=api_key)
+        self.query = query
+        self.location = location
+        self.search_url = f"https://www.monster.com/jobs/search?q={urllib.parse.quote(query or '')}&where={urllib.parse.quote(location or '')}"
+        logger.info(f"Initialized Monster scraper with {self.preferred_provider.value} provider")
+
     async def scrape(self) -> List[Dict[str, Any]]:
-        """
-        Scrape jobs from Monster search results.
-        
-        Implements Requirement 1.4:
-        - Fetches Monster search results page
-        - Extracts job URLs from search results
-        - Fetches individual job pages
-        - Parses job details from HTML
-        
-        Returns:
-            List of raw job dictionaries from Monster
-            
-        Raises:
-            ScrapingError: If fetching or parsing fails
-        """
-        
         try:
-            logger.info(f"Fetching Monster search results using Selenium: {self.search_url}")
+            html = await self._get_page_content(self.search_url, render=False, super_proxy=True)
+            if not html: return []
+            soup = BeautifulSoup(html, 'html.parser')
             
-            # Step 1: Initialize driver and fetch page
-            self.driver = self._init_driver()
-            if not self.driver:
-                raise ScrapingError("Failed to initialize Selenium driver for Monster")
-            self.driver.get(self.search_url)
+            # Refined Monster selectors
+            selectors = [
+                'a[href*="/job-openings/"]',
+                'a.title-link',
+                'a[class*="title-link"]',
+                'a[data-testid="job-card-link"]',
+                'a[class*="job-name"]',
+                'h2 a',
+                'div[class*="job-card"] a'
+            ]
             
-            # Step 2: Wait for job cards to appear
-            try:
-                wait = WebDriverWait(self.driver, 20)
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.job-card, [class*='job-card']")))
-                # Extra wait for stability
-                time.sleep(2)
-            except TimeoutException:
-                # Diagnostic: Save page source to see what Monster is showing
-                if self.driver:
-                    self._save_debug_html(self.driver.page_source, "monster_search_timeout")
-                logger.warning("Timed out waiting for Monster job cards")
-                return []
+            job_links = []
+            for selector in selectors:
+                found = soup.select(selector)
+                if found: job_links.extend(found)
             
-            # Step 3: Parse the fully rendered HTML
-            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            # Remove duplicates and get URLs only
+            urls = []
+            for link in job_links:
+                href = link.get('href', '')
+                if href:
+                    if not href.startswith('http'): 
+                        path = href if href.startswith('/') else '/' + href
+                        href = f'https://www.monster.com{path}'
+                    if href not in urls: urls.append(href)
             
-            # Extract job URLs from search results
-            job_urls = self._extract_job_urls(soup)
-            
-            if not job_urls:
-                logger.warning("No job URLs found in Monster search results")
-                return []
-            
-            logger.info(f"Found {len(job_urls)} job URLs in Monster search results")
-            
-            # Fetch and parse individual job pages
+            logger.info(f'Monster found {len(urls)} unique job links. Soup length: {len(str(soup))}')
+            if not urls:
+                logger.info(f'Monster soup snippet: {str(soup)[:3000]}')
             jobs = []
-            for job_url in job_urls[:20]:  # Limit to 20 jobs per scrape to respect rate limits
+            for job_url in urls[:15]:
                 try:
-                    # Wait for rate limit before fetching job page
-                    await self.wait_for_rate_limit()
-                    
-                    logger.debug(f"Fetching Monster job page via Selenium: {job_url}")
-                    self.driver.get(job_url)
-                    
-                    # Wait for content
-                    time.sleep(2)
-                    
-                    # Parse job page HTML
-                    job_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-                    
-                    # Extract job details
-                    job_data = self._parse_job_page(job_soup, job_url)
-                    
-                    # Validate against DB constraints before adding to list
-                    if job_data and self._validate_job_data(job_data):
-                        jobs.append(job_data)
-                        logger.info(f"Successfully scraped Naukri job: {job_data['title']}")
-                    else:
-                        logger.warning(f"Skipping job from {job_url}: Validation failed (likely incomplete data)")
-                    
-                except Exception as e:
-                    logger.error(f"Error fetching Monster job page {job_url}: {e}")
-                    continue
-            
-            logger.info(f"Successfully scraped {len(jobs)} jobs from Monster")
+                    h = await self._get_page_content(job_url)
+                    if h:
+                        data = self._parse_job_page(BeautifulSoup(h, 'html.parser'), job_url)
+                        if data: jobs.append(data)
+                    await asyncio.sleep(1)
+                except: continue
             return jobs
-            
-        except requests.RequestException as e:
-            error_msg = f"Failed to fetch Monster search results: {e}"
-            logger.error(error_msg)
-            raise ScrapingError(error_msg)
-        except ScrapingError:
-            raise
         except Exception as e:
-            error_msg = f"Unexpected error scraping Monster: {e}"
-            logger.error(error_msg)
-            raise ScrapingError(error_msg)
-        finally:
-            self._close_driver()
-    
-    def _extract_job_urls(self, soup) -> List[str]:
-        """
-        Extract job URLs from Monster search results page.
-        
-        Args:
-            soup: BeautifulSoup object of search results page
-            
-        Returns:
-            List of job URLs
-        """
-        job_urls = []
-        
-        # Monster uses various selectors for job listings
-        job_cards = (
-            soup.find_all('div', class_='job-card') or
-            soup.find_all('section', class_='card-content') or
-            soup.find_all('div', class_='job-cardstyle__JobCardComponent') or
-            soup.find_all('div', attrs={'data-testid': 'job-card'})
-        )
-        
-        for card in job_cards:
+            logger.error(f"Monster scrape failed: {e}")
+            return []
+        finally: self._close_driver()
+
+    def _parse_job_page(self, soup, url: str) -> Optional[Dict[str, Any]]:
+        import json
+        for script in soup.find_all('script', type='application/ld+json'):
             try:
-                # Find the job title link
-                title_link = (
-                    card.find('a', class_='job-title') or
-                    card.find('a', class_='title') or
-                    card.find('h2', class_='title').find('a') if card.find('h2', class_='title') else None
-                )
-                
-                if title_link and title_link.get('href'):
-                    job_url = title_link['href']
-                    
-                    # Make absolute URL if relative
-                    if not job_url.startswith('http'):
-                        job_url = self.base_url + job_url
-                    
-                    job_urls.append(job_url)
-            except Exception as e:
-                logger.error(f"Error extracting job URL from card: {e}")
-                continue
-        
-        return job_urls
-    
-    def _parse_job_page(self, soup, job_url: str) -> Optional[Dict[str, Any]]:
-        """
-        Parse job details from Monster job page.
-        
-        Args:
-            soup: BeautifulSoup object of job page
-            job_url: URL of the job page
-            
-        Returns:
-            Dictionary with job data or None if parsing fails
-        """
-        try:
-            # Extract job title
-            title_elem = (
-                soup.find('h1', class_='job-title') or
-                soup.find('h1', class_='title') or
-                soup.find('h1')
-            )
-            title = title_elem.get_text(strip=True) if title_elem else 'Untitled Position'
-            
-            # Extract company name
-            company_elem = (
-                soup.find('span', class_='company') or
-                soup.find('div', class_='company') or
-                soup.find('a', class_='company-name')
-            )
-            company = company_elem.get_text(strip=True) if company_elem else 'Unknown Company'
-            
-            # Extract location
-            location_elem = (
-                soup.find('span', class_='location') or
-                soup.find('div', class_='location') or
-                soup.find('span', {'itemprop': 'jobLocation'})
-            )
-            location = location_elem.get_text(strip=True) if location_elem else 'Not specified'
-            
-            # Extract job type
-            job_type_elem = (
-                soup.find('span', class_='job-type') or
-                soup.find('div', class_='employment-type')
-            )
-            job_type = job_type_elem.get_text(strip=True) if job_type_elem else 'Full-Time'
-            
-            # Extract salary
-            salary_elem = (
-                soup.find('span', class_='salary') or
-                soup.find('div', class_='salary-range') or
-                soup.find('span', {'itemprop': 'baseSalary'})
-            )
-            salary = salary_elem.get_text(strip=True) if salary_elem else ''
-            
-            # Extract job description
-            desc_elem = (
-                soup.find('div', class_='job-description') or
-                soup.find('div', {'id': 'JobDescription'}) or
-                soup.find('div', class_='description')
-            )
-            description = desc_elem.get_text(strip=True) if desc_elem else ''
-            
-            # Extract requirements (if available)
-            requirements_elem = (
-                soup.find('div', class_='requirements') or
-                soup.find('div', class_='qualifications')
-            )
-            requirements = requirements_elem.get_text(strip=True) if requirements_elem else ''
-            
-            # Extract posted date
-            posted_elem = (
-                soup.find('span', class_='posted-date') or
-                soup.find('time', class_='posted') or
-                soup.find('span', class_='date')
-            )
-            posted = posted_elem.get_text(strip=True) if posted_elem else ''
-            
-            job_data = {
-                'title': title,
-                'company': company,
-                'location': location,
-                'job_type': job_type,
-                'salary': salary,
-                'description': description,
-                'requirements': requirements,
-                'posted': posted,
-                'url': job_url,
-            }
-            
-            logger.debug(f"Parsed Monster job: {title} at {company}")
-            return job_data
-            
-        except Exception as e:
-            logger.error(f"Error parsing Monster job page: {e}")
-            return None
-    
+                data = json.loads(script.string)
+                ld = data if isinstance(data, dict) else (data[0] if isinstance(data, list) and data else {})
+                if ld.get("@type") == "JobPosting":
+                    desc = ld.get("description", "")
+                    if not isinstance(desc, str):
+                        try: desc = BeautifulSoup(str(desc), "html.parser").get_text("\n", strip=True)
+                        except: desc = str(desc)
+                    return {
+                        "title": ld.get("title"),
+                        "company": ld.get("hiringOrganization", {}).get("name"),
+                        "location": ld.get("jobLocation", {}).get("address", {}).get("addressLocality"),
+                        "description": desc,
+                        "posted": ld.get("datePosted"),
+                        "url": url
+                    }
+            except: continue
+        return None
+
     def normalize_job(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convert Monster format to standard schema.
-        
-        Implements Requirement 1.5:
-        - Maps Monster HTML fields to standard schema
-        - Extracts job title, company, location, description
-        - Parses salary information
-        - Extracts job type information
-        - Sets source_platform to 'monster'
-        
-        Args:
-            raw_data: Raw job data from Monster
-            
-        Returns:
-            Normalized job dictionary conforming to Job model schema
-        """
-        from datetime import datetime, timedelta
-        
-        # Parse job type
-        job_type = normalize_job_type(raw_data.get('job_type', 'Full-Time'))
-        
-        # Extract experience level from description and requirements
-        description = raw_data.get('description', '')
-        requirements = raw_data.get('requirements', '')
-        combined_text = f"{description} {requirements}"
-        experience_level = self._extract_experience_level_from_text(combined_text)
-        experience_level = normalize_experience_level(experience_level)
-        
-        # Extract salary info
-        salary_info = extract_salary_info(raw_data.get('salary', ''))
-        
-        # Parse posted date from posted text
-        posted_at = self._parse_posted_date(raw_data.get('posted', ''))
-        
-        # Calculate expiration date (30 days from posting)
-        expires_at = posted_at + timedelta(days=30)
-        
-        # Check if remote
-        location = raw_data.get('location', 'Not specified')
-        remote = 'remote' in location.lower() or 'remote' in description.lower()
-        
-        # Build normalized job dictionary
-        normalized = {
-            'title': raw_data.get('title', 'Untitled Position'),
-            'company': raw_data.get('company', 'Unknown Company'),
-            'location': location,
-            'remote': remote,
-            'job_type': job_type,
-            'experience_level': experience_level,
-            'description': description[:5000] if description else 'No description available',
-            'requirements': requirements[:2000] if requirements else None,
-            'responsibilities': None,
-            'salary_min': salary_info.get('salary_min'),
-            'salary_max': salary_info.get('salary_max'),
-            'salary_currency': 'USD',
-            'source_type': SourceType.AGGREGATED,
-            'source_url': raw_data.get('url', ''),
+        dt = datetime.utcnow()
+        try: dt = datetime.fromisoformat(raw_data.get('posted', '').split('T')[0])
+        except: pass
+        return {
+            'title': raw_data.get('title', 'Unknown'),
+            'company': raw_data.get('company', 'Unknown'),
+            'location': str(raw_data.get('location', 'USA')),
+            'remote': 'remote' in str(raw_data.get('description', '')).lower(),
+            'job_type': JobType.FULL_TIME,
+            'experience_level': ExperienceLevel.MID,
+            'description': str(raw_data.get('description', '')).replace('\n', ' ')[:5000],
             'source_platform': 'monster',
-            'posted_at': posted_at,
-            'expires_at': expires_at,
+            'source_url': raw_data.get('url', ''),
+            'posted_at': dt,
+            'expires_at': dt + timedelta(days=30),
+            'source_type': SourceType.AGGREGATED,
+            'salary_currency': 'USD',
         }
-        
-        logger.debug(f"Normalized Monster job: {normalized['title']} at {normalized['company']}")
-        return normalized
-    
-    def _extract_experience_level_from_text(self, text: str) -> str:
-        """
-        Extract experience level from Monster job text.
-        
-        Args:
-            text: Job description or requirements text
-            
-        Returns:
-            Experience level string
-        """
-        if not text:
-            return 'Mid Level'
-        
-        text_lower = text.lower()
-        
-        # Check for experience level keywords
-        if any(term in text_lower for term in ['senior', 'sr.', 'sr ', 'principal', 'staff']):
-            return 'Senior'
-        elif any(term in text_lower for term in ['junior', 'jr.', 'jr ', 'entry', 'entry-level', 'entry level', 'graduate']):
-            return 'Entry Level'
-        elif any(term in text_lower for term in ['lead', 'manager', 'director', 'head of']):
-            return 'Lead'
-        elif any(term in text_lower for term in ['executive', 'vp', 'vice president', 'cto', 'ceo', 'cfo']):
-            return 'Executive'
-        
-        # Check for years of experience
-        import re
-        years_match = re.search(r'(\d+)\+?\s*(?:years?|yrs?)\s*(?:of\s*)?(?:experience|exp)', text_lower)
-        
-        if years_match:
-            years = int(years_match.group(1))
-            
-            if years == 0 or years <= 2:
-                return 'Entry Level'
-            elif years <= 4:
-                return 'Mid Level'
-            elif years <= 7:
-                return 'Senior'
-            else:
-                return 'Lead'
-        
-        return 'Mid Level'
-    
-    def _parse_posted_date(self, posted_text: str) -> datetime:
-        """
-        Parse posted date from Monster posted text.
-        
-        Args:
-            posted_text: Posted text (e.g., "Posted 2 days ago", "Just posted")
-            
-        Returns:
-            datetime object representing posted date
-        """
-        if not posted_text:
-            return datetime.utcnow()
-        
-        posted_lower = posted_text.lower()
-        
-        # Check for "just posted" or "today"
-        if 'just' in posted_lower or 'today' in posted_lower:
-            return datetime.utcnow()
-        
-        # Extract number of days/hours
-        import re
-        
-        # Try to match "X days ago"
-        days_match = re.search(r'(\d+)\s*day', posted_lower)
-        if days_match:
-            days = int(days_match.group(1))
-            return datetime.utcnow() - timedelta(days=days)
-        
-        # Try to match "X hours ago"
-        hours_match = re.search(r'(\d+)\s*hour', posted_lower)
-        if hours_match:
-            hours = int(hours_match.group(1))
-            return datetime.utcnow() - timedelta(hours=hours)
-        
-        # Try to match "X weeks ago"
-        weeks_match = re.search(r'(\d+)\s*week', posted_lower)
-        if weeks_match:
-            weeks = int(weeks_match.group(1))
-            return datetime.utcnow() - timedelta(weeks=weeks)
-        
-        # Default to current time if parsing fails
-        logger.warning(f"Could not parse Monster posted date '{posted_text}', using current time")
-        return datetime.utcnow()
 
 
 class RateLimiter:
@@ -2263,9 +1697,9 @@ async def scrape_and_process_jobs(
         db_session
     )
     
-    jobs_found = 0
-    jobs_created = 0
-    jobs_updated = 0
+    jobs_found: int = 0
+    jobs_created: int = 0
+    jobs_updated: int = 0
     
     try:
         # Initialize scraper with configuration
@@ -2290,7 +1724,9 @@ async def scrape_and_process_jobs(
             for url in rss_urls:
                 try:
                     logger.info(f"Scraping LinkedIn feed: {url}")
-                    scraper = scraper_class(rss_feed_url=url)
+                    provider = scraper_config.get('provider', ScrapingProvider.DIRECT)
+                    api_key = scraper_config.get('api_key')
+                    scraper = scraper_class(rss_feed_url=url, provider=provider, api_key=api_key)
                     # Use scrape_with_retry for individual feeds
                     feed_jobs = await scraper.scrape_with_retry()
                     raw_jobs.extend(feed_jobs)
@@ -2303,18 +1739,24 @@ async def scrape_and_process_jobs(
             elif not scraper:
                 scraper = scraper_class(rss_feed_url='https://www.linkedin.com/jobs/search/')
         elif source_platform.lower() == 'indeed':
-            api_key = scraper_config.get('api_key', getattr(settings, 'INDEED_API_KEY', ''))
-            query = scraper_config.get('query', 'software engineer')
-            location = scraper_config.get('location', '')
-            scraper = scraper_class(api_key=api_key, query=query, location=location)
+            provider = scraper_config.get('provider', ScrapingProvider.SCRAPE_DO)
+            api_key = scraper_config.get('api_key')
+            query = scraper_config.get('query', getattr(settings, 'INDEED_SEARCH_QUERY', 'software engineer'))
+            location = scraper_config.get('location', getattr(settings, 'INDEED_SEARCH_LOCATION', 'New York'))
+            scraper = IndeedScraper(query=query, location=location, provider=provider, api_key=api_key)
             raw_jobs = await scraper.scrape_with_retry()
         elif source_platform.lower() == 'naukri':
-            search_url = scraper_config.get('search_url', getattr(settings, 'NAUKRI_SEARCH_URL', 'https://www.naukri.com/software-engineer-jobs'))
-            scraper = scraper_class(search_url=search_url)
+            search_url = scraper_config.get('search_url', getattr(settings, 'NAUKRI_SEARCH_URL', ''))
+            provider = scraper_config.get('provider', ScrapingProvider.SELENIUM)
+            api_key = scraper_config.get('api_key')
+            scraper = NaukriScraper(search_url=search_url, provider=provider, api_key=api_key)
             raw_jobs = await scraper.scrape_with_retry()
         elif source_platform.lower() == 'monster':
-            search_url = scraper_config.get('search_url', getattr(settings, 'MONSTER_SEARCH_URL', 'https://www.monster.com/jobs/search/?q=software-engineer'))
-            scraper = scraper_class(search_url=search_url)
+            provider = scraper_config.get('provider', ScrapingProvider.SCRAPE_DO)
+            api_key = scraper_config.get('api_key')
+            query = scraper_config.get('query', 'software engineer')
+            location = scraper_config.get('location', 'New York')
+            scraper = MonsterScraper(query=query, location=location, provider=provider, api_key=api_key)
             raw_jobs = await scraper.scrape_with_retry()
         else:
             raise ValueError(f"Unsupported source platform: {source_platform}")
