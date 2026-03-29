@@ -28,11 +28,13 @@ export function JobCard({ job }: JobCardProps) {
     }
   }
 
-  const formatJobType = (type: string) => {
+  const formatJobType = (type?: string) => {
+    if (!type) return 'N/A'
     return type.replace('_', ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase())
   }
 
-  const formatExperienceLevel = (level: string) => {
+  const formatExperienceLevel = (level?: string) => {
+    if (!level) return 'N/A'
     return level.charAt(0) + level.slice(1).toLowerCase()
   }
 
