@@ -65,7 +65,7 @@ class ProviderTransport:
     @staticmethod
     async def fetch(url: str, provider: ScrapingProvider, render: bool = False, super_proxy: bool = False, source_name: str = "", api_key: Optional[str] = None) -> str:
         """Fetch content using the specified provider."""
-        logger.info(f"Fetching {url} via {provider.value} (render={render}, super={super_proxy})")
+        logger.info(f"Fetching {url} via {provider} (render={render}, super={super_proxy})")
         
         try:
             if provider == ScrapingProvider.SCRAPE_DO:
@@ -131,7 +131,7 @@ class ProviderTransport:
             
             return ""
         except Exception as e:
-            logger.error(f"Provider {provider.value} error: {e}")
+            logger.error(f"Provider {provider} error: {e}")
             return ""
 
     @staticmethod
@@ -189,7 +189,7 @@ class ProviderTransport:
 
             return ""
         except Exception as e:
-            logger.error(f"Async provider {provider.value} error: {e}")
+            logger.error(f"Async provider {provider} error: {e}")
             return ""
 
 
@@ -881,7 +881,7 @@ async def create_scraping_task(
         db_session.refresh(task)
     
     logger.info(
-        f"Created scraping task: id={task.id}, type={task_type.value}, "
+        f"Created scraping task: id={task.id}, type={task_type}, "
         f"platform={source_platform}, url={target_url}"
     )
     
@@ -927,7 +927,7 @@ async def update_scraping_task(
     
     logger.info(
         f"Updated scraping task {task_id}: "
-        f"status={task.status.value}, "
+        f"status={task.status}, "
         f"jobs_found={task.jobs_found}, "
         f"jobs_created={task.jobs_created}, "
         f"jobs_updated={task.jobs_updated}"
@@ -1207,7 +1207,7 @@ class IndeedScraper(BaseScraper):
         self.location = location
         self.base_url = "https://www.indeed.com/jobs"
         self.base_host = "https://www.indeed.com"
-        logger.info(f"Initialized Indeed scraper with {self.preferred_provider.value} provider")
+        logger.info(f"Initialized Indeed scraper with {self.preferred_provider} provider")
 
     async def scrape(self) -> List[Dict[str, Any]]:
         try:
@@ -1419,7 +1419,7 @@ class MonsterScraper(BaseScraper):
         self.query = query
         self.location = location
         self.search_url = f"https://www.monster.com/jobs/search?q={urllib.parse.quote(query or '')}&where={urllib.parse.quote(location or '')}"
-        logger.info(f"Initialized Monster scraper with {self.preferred_provider.value} provider")
+        logger.info(f"Initialized Monster scraper with {self.preferred_provider} provider")
 
     async def scrape(self) -> List[Dict[str, Any]]:
         try:
