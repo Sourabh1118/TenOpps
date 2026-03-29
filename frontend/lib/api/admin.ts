@@ -211,11 +211,22 @@ export async function getScrapingStatus(): Promise<ScrapingStatus> {
   return response.data
 }
 
+export interface ScraperConfig {
+  provider?: string
+  api_key?: string
+  query?: string
+  location?: string
+  search_url?: string
+}
+
 /**
  * Manually trigger a scraping job for a source
  */
-export async function triggerScrape(source: string): Promise<{ message: string; task_id: string }> {
-  const response = await apiClient.post(`/admin/scraping/trigger/${source}`)
+export async function triggerScrape(
+  source: string, 
+  config?: ScraperConfig
+): Promise<{ message: string; task_id: string; provider?: string }> {
+  const response = await apiClient.post(`/admin/scraping/trigger/${source}`, config)
   return response.data
 }
 

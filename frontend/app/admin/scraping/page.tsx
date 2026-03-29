@@ -1,7 +1,19 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { getScrapingStatus, triggerScrape, resetCircuitBreaker, type ScrapingStatus } from '@/lib/api/admin'
+import { useEffect, useState, useCallback, Fragment } from 'react'
+import { getScrapingStatus, triggerScrape, resetCircuitBreaker, type ScrapingStatus, type ScraperConfig } from '@/lib/api/admin'
+
+const SCRAPER_PROVIDERS = [
+  { id: 'scrape_do', name: 'Scrape.do (Default)', type: 'Proxy' },
+  { id: 'scraper_api', name: 'ScraperAPI', type: 'Proxy' },
+  { id: 'scraping_bee', name: 'ScrapingBee', type: 'Proxy' },
+  { id: 'bright_data', name: 'Bright Data', type: 'Proxy' },
+  { id: 'diffbot', name: 'Diffbot', type: 'AI' },
+  { id: 'parsehub', name: 'ParseHub', type: 'Cloud' },
+  { id: 'browse_ai', name: 'Browse AI', type: 'Cloud' },
+  { id: 'decodo', name: 'Decodo', type: 'Proxy' },
+  { id: 'databar', name: 'Databar', type: 'API' },
+]
 
 const SOURCE_ICONS: Record<string, string> = { linkedin: '🔵', indeed: '🟣', naukri: '🟠', monster: '🔴' }
 
@@ -12,6 +24,8 @@ export default function AdminScrapingPage() {
   const [triggering, setTriggering] = useState<string | null>(null)
   const [resetting, setResetting] = useState<string | null>(null)
   const [triggerMsg, setTriggerMsg] = useState<string | null>(null)
+  const [showConfig, setShowConfig] = useState<string | null>(null)
+  const [config, setConfig] = useState<ScraperConfig>({ provider: 'scrape_do' })
 
   const load = useCallback(async () => {
     try {
@@ -28,12 +42,15 @@ export default function AdminScrapingPage() {
 
   useEffect(() => { load() }, [load])
 
-  const handleTrigger = async (source: string) => {
+  const handleTrigger = async () => {
+    if (!showConfig) return
+    const source = showConfig
     setTriggering(source)
     setTriggerMsg(null)
+    setShowConfig(null)
     try {
-      const res = await triggerScrape(source)
-      setTriggerMsg(`✅ ${res.message} (task: ${res.task_id})`)
+      const res = await triggerScrape(source, config)
+      setTriggerMsg(`✅ ${res.message} via ${res.provider || 'default'} (task: ${res.task_id})`)
     } catch (err: any) {
       setTriggerMsg(`❌ ${err.response?.data?.detail || 'Failed to trigger scrape'}`)
     } finally {
@@ -106,7 +123,10 @@ export default function AdminScrapingPage() {
 
                 <div className="flex gap-2">
                   <button
-                    onClick={() => handleTrigger(src.source)}
+                    onClick={() => {
+                      setShowConfig(src.source)
+                      setConfig({ provider: 'scrape_do' })
+                    }}
                     disabled={triggering === src.source}
                     className="flex-1 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 font-medium"
                   >
@@ -168,6 +188,83 @@ export default function AdminScrapingPage() {
             </div>
           </div>
         </>
+      )}
+      {/* Scraper Config Modal */}
+      {showConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity" 
+            onClick={() => setShowConfig(null)}
+          />
+          
+          {/* Modal Content */}
+          <div className="relative w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl transform transition-all border border-gray-100">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-gray-900 capitalize">Trigger {showConfig} Scrape</h2>
+              <button onClick={() => setShowConfig(null)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Select Provider</label>
+                <select 
+                  value={config.provider}
+                  onChange={(e) => setConfig({ ...config, provider: e.target.value })}
+                  className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                >
+                  {SCRAPER_PROVIDERS.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.type})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">API Key Override (Optional)</label>
+                <input 
+                  type="password"
+                  placeholder="Leave blank for system default"
+                  value={config.api_key || ''}
+                  onChange={(e) => setConfig({ ...config, api_key: e.target.value })}
+                  className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                />
+              </div>
+
+              <div className="relative py-2">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-100"></div></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-gray-400">Advanced</span></div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Custom Search URL (Optional)</label>
+                <input 
+                  type="text"
+                  placeholder="Platform specific search URL"
+                  value={config.search_url || ''}
+                  onChange={(e) => setConfig({ ...config, search_url: e.target.value })}
+                  className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-8">
+              <button
+                onClick={() => setShowConfig(null)}
+                className="flex-1 py-2.5 text-sm font-semibold text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTrigger}
+                className="flex-1 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-md shadow-blue-200 transition-all"
+              >
+                Confirm & Start
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
