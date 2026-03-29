@@ -18,7 +18,7 @@ from sqlalchemy import and_
 from app.api.dependencies import get_current_employer
 from app.core.redis import redis_client
 from app.db.session import get_db
-from app.models.job import Job, JobStatus, SourceType
+from app.models.job import Job, JobStatus, SourceType, JobType, ExperienceLevel
 from app.models.employer import Employer
 from app.schemas.auth import TokenData
 from app.schemas.job import (
