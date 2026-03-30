@@ -1285,7 +1285,7 @@ class IndeedScraper(BaseScraper):
         try:
             params = {'q': self.query, 'l': self.location, 'fromage': '1'}
             search_url = f"{self.base_url}?{urllib.parse.urlencode(params)}"
-            html = await self._get_page_content(search_url)
+            html = await self._get_page_content(search_url, render=True, super_proxy=True)
             if not html: return []
             soup = BeautifulSoup(html, 'html.parser')
             
@@ -1495,16 +1495,18 @@ class MonsterScraper(BaseScraper):
 
     async def scrape(self) -> List[Dict[str, Any]]:
         try:
-            html = await self._get_page_content(self.search_url, render=False, super_proxy=True)
+            html = await self._get_page_content(self.search_url, render=True, super_proxy=True)
             if not html: return []
             soup = BeautifulSoup(html, 'html.parser')
             
             # Refined Monster selectors
             selectors = [
-                'a[href*="/job-openings/"]',
                 'a.title-link',
                 'a[class*="title-link"]',
+                'a[href*="/job-openings/"]',
                 'a[data-testid="job-card-link"]',
+                '[data-testid="jobcard-container"] a',
+                'div[class*="JobCard-sc"] a',
                 'a[class*="job-name"]',
                 'h2 a',
                 'div[class*="job-card"] a'
