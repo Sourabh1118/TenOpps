@@ -570,6 +570,75 @@ async def update_job_status(
     return {"message": f"Job status updated to {new_status_enum.value}", "job_id": job_id}
 
 
+class BulkStatusRequest(BaseModel):
+    job_ids: List[str]
+    status: str
+
+
+@router.post("/jobs/bulk-status", summary="Update multiple jobs status")
+async def bulk_update_job_status(
+    body: BulkStatusRequest,
+    admin: TokenData = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Batch update status for multiple job postings."""
+    from uuid import UUID
+    
+    try:
+        new_status_enum = JobStatus(body.status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid status value: {body.status}")
+    
+    # Convert string IDs to UUIDs
+    try:
+        uuids = [UUID(jid) for jid in body.job_ids]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format in list")
+    
+    # Perform bulk update
+    updated_count = db.query(Job).filter(Job.id.in_(uuids)).update(
+        {Job.status: new_status_enum}, 
+        synchronize_session=False
+    )
+    db.commit()
+    
+    logger.info(f"Admin {admin.user_id} batch updated {updated_count} jobs to {new_status_enum.value}")
+    return {
+        "message": f"Successfully updated {updated_count} jobs to {new_status_enum.value}",
+        "updated_count": updated_count
+    }
+
+
+class BulkDeleteRequest(BaseModel):
+    job_ids: List[str]
+
+
+@router.post("/jobs/bulk-delete", summary="Delete multiple jobs")
+async def bulk_delete_jobs(
+    body: BulkDeleteRequest,
+    admin: TokenData = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Batch delete multiple job postings."""
+    from uuid import UUID
+    
+    # Convert string IDs to UUIDs
+    try:
+        uuids = [UUID(jid) for jid in body.job_ids]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format in list")
+    
+    # Perform bulk delete
+    deleted_count = db.query(Job).filter(Job.id.in_(uuids)).delete(synchronize_session=False)
+    db.commit()
+    
+    logger.info(f"Admin {admin.user_id} batch deleted {deleted_count} jobs")
+    return {
+        "message": f"Successfully deleted {deleted_count} jobs",
+        "deleted_count": deleted_count
+    }
+
+
 # ──────────────────────────────────────────────────────────────
 # Scraping Monitor
 # ──────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { getAdminJobs, updateJobStatus, type AdminJobItem } from '@/lib/api/admin'
+import { getAdminJobs, updateJobStatus, bulkUpdateJobStatus, bulkDeleteJobs, type AdminJobItem } from '@/lib/api/admin'
 
 const SOURCES = ['all', 'linkedin', 'indeed', 'naukri', 'monster']
 
@@ -15,6 +15,8 @@ export default function AdminJobsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [isBulkLoading, setIsBulkLoading] = useState(false)
   const limit = 50
 
   const load = useCallback(async () => {
@@ -45,6 +47,52 @@ export default function AdminJobsPage() {
       await load()
     } catch { alert('Failed to update job status') }
     finally { setActionLoading(null) }
+  }
+
+  const toggleSelection = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAll = () => {
+    if (selectedIds.size === jobs.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(jobs.map(j => j.id)))
+    }
+  }
+
+  const handleBulkStatus = async (status: 'active' | 'expired') => {
+    if (selectedIds.size === 0) return
+    setIsBulkLoading(true)
+    try {
+      await bulkUpdateJobStatus(Array.from(selectedIds), status)
+      setSelectedIds(new Set())
+      await load()
+    } catch {
+      alert(`Failed to bulk update jobs to ${status}`)
+    } finally {
+      setIsBulkLoading(false)
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return
+    if (!confirm(`Are you sure you want to delete ${selectedIds.size} jobs?`)) return
+    setIsBulkLoading(true)
+    try {
+      await bulkDeleteJobs(Array.from(selectedIds))
+      setSelectedIds(new Set())
+      await load()
+    } catch {
+      alert('Failed to bulk delete jobs')
+    } finally {
+      setIsBulkLoading(false)
+    }
   }
 
   const statusBadge = (s: string) => {
@@ -92,6 +140,44 @@ export default function AdminJobsPage() {
         <button onClick={load} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">Refresh</button>
       </div>
 
+      {/* Bulk Actions Toolbar */}
+      {selectedIds.size > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 flex items-center justify-between animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3">
+            <span className="text-blue-800 font-semibold">{selectedIds.size} jobs selected</span>
+            <button 
+              onClick={() => setSelectedIds(new Set())}
+              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+            >
+              Clear selection
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleBulkStatus('active')}
+              disabled={isBulkLoading}
+              className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
+            >
+              Bulk Activate
+            </button>
+            <button
+              onClick={() => handleBulkStatus('expired')}
+              disabled={isBulkLoading}
+              className="px-4 py-2 bg-gray-600 text-white text-sm rounded-lg hover:bg-gray-700 disabled:opacity-50 font-medium"
+            >
+              Bulk Deactivate
+            </button>
+            <button
+              onClick={handleBulkDelete}
+              disabled={isBulkLoading}
+              className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 font-medium"
+            >
+              Bulk Delete
+            </button>
+          </div>
+        </div>
+      )}
+
       {error && <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 text-red-700 text-sm">{error}</div>}
 
       {/* Table */}
@@ -100,6 +186,14 @@ export default function AdminJobsPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
+                <th className="px-6 py-3 text-left">
+                  <input 
+                    type="checkbox" 
+                    checked={jobs.length > 0 && selectedIds.size === jobs.length}
+                    onChange={toggleAll}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Title</th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Company</th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Source</th>
@@ -117,7 +211,15 @@ export default function AdminJobsPage() {
                 <tr><td colSpan={8} className="py-12 text-center text-gray-400">No jobs found</td></tr>
               ) : (
                 jobs.map(j => (
-                  <tr key={j.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={j.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(j.id) ? 'bg-blue-50/50' : ''}`}>
+                    <td className="px-6 py-4">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedIds.has(j.id)}
+                        onChange={() => toggleSelection(j.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </td>
                     <td className="px-6 py-4 font-medium text-gray-900 max-w-xs truncate">{j.title}</td>
                     <td className="px-6 py-4 text-gray-600">{j.company}</td>
                     <td className="px-6 py-4">

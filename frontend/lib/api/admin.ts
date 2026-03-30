@@ -176,6 +176,27 @@ export async function updateJobStatus(
   return response.data
 }
 
+/**
+ * Bulk update status for multiple jobs
+ */
+export async function bulkUpdateJobStatus(
+  jobIds: string[],
+  status: 'active' | 'expired'
+): Promise<{ message: string; updated_count: number }> {
+  const response = await apiClient.post('/admin/jobs/bulk-status', { job_ids: jobIds, status })
+  return response.data
+}
+
+/**
+ * Bulk delete multiple jobs
+ */
+export async function bulkDeleteJobs(
+  jobIds: string[]
+): Promise<{ message: string; deleted_count: number }> {
+  const response = await apiClient.post('/admin/jobs/bulk-delete', { job_ids: jobIds })
+  return response.data
+}
+
 // ─────────────────────────────────────
 // Scraping Monitor
 // ─────────────────────────────────────
