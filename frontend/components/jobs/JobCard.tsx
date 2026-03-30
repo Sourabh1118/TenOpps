@@ -3,6 +3,16 @@
 import Link from 'next/link'
 import { Job } from '@/types'
 import { formatDistanceToNow } from 'date-fns'
+import { 
+  MapPin, 
+  Briefcase, 
+  Coins, 
+  Star, 
+  Building2, 
+  Eye, 
+  Users,
+  Target
+} from 'lucide-react'
 
 interface JobCardProps {
   job: Job
@@ -28,31 +38,20 @@ export function JobCard({ job }: JobCardProps) {
     }
   }
 
-  const formatJobType = (type?: string) => {
-    if (!type) return 'N/A'
-    return type.replace('_', ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase())
-  }
-
-  const formatExperienceLevel = (level?: string) => {
-    if (!level) return 'N/A'
-    return level.charAt(0) + level.slice(1).toLowerCase()
-  }
-
   const stripHtml = (html?: string) => {
     if (!html) return ''
     return html.replace(/<[^>]*>?/gm, '')
   }
 
   const getQualityBadge = () => {
-    if (job.qualityScore >= 80) return { text: 'High Quality', color: 'bg-green-100 text-green-800' }
-    if (job.qualityScore >= 60) return { text: 'Good', color: 'bg-blue-100 text-blue-800' }
-    return { text: 'Standard', color: 'bg-gray-100 text-gray-800' }
+    if (job.qualityScore >= 80) return { text: 'High Quality', color: 'bg-emerald-50 text-emerald-700 border-emerald-100' }
+    if (job.qualityScore >= 60) return { text: 'Good Match', color: 'bg-blue-50 text-blue-700 border-blue-100' }
+    return { text: 'Standard', color: 'bg-slate-50 text-slate-700 border-slate-100' }
   }
 
   const qualityBadge = getQualityBadge()
   const salary = formatSalary()
   
-  // Safely parse date to avoid RangeError
   let posted_ago = 'Recently'
   try {
     const date = new Date(job.postedAt)
@@ -65,74 +64,78 @@ export function JobCard({ job }: JobCardProps) {
 
   return (
     <Link href={`/jobs/${job.id}`}>
-      <div className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow duration-200 cursor-pointer">
-        {/* Header with Featured Badge */}
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex-1">
-            <h3 className="text-xl font-semibold text-gray-900 mb-1 hover:text-blue-600 transition-colors">
-              {job.title}
-            </h3>
-            <p className="text-lg text-gray-700 font-medium">{job.company}</p>
-          </div>
-          {job.featured && (
-            <span className="ml-4 px-3 py-1 bg-yellow-100 text-yellow-800 text-sm font-medium rounded-full flex-shrink-0">
-              ⭐ Featured
-            </span>
-          )}
-        </div>
+      <div className="group bg-white border border-slate-100 rounded-[2rem] p-6 hover:shadow-2xl hover:shadow-blue-500/10 hover:border-blue-100 transition-all duration-300 cursor-pointer relative overflow-hidden">
+        {/* Subtle hover effect background */}
+        <div className="absolute top-0 right-0 -mr-8 -mt-8 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors"></div>
 
-        {/* Location and Remote Badge */}
-        <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <span className="text-gray-600 flex items-center">
-            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            {job.location}
-          </span>
-          {job.remote && (
-            <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded">
-              🏠 Remote
-            </span>
-          )}
-        </div>
-
-        {/* Job Details */}
-        <div className="flex items-center gap-3 mb-3 flex-wrap text-sm text-gray-600">
-          <span className="px-2 py-1 bg-gray-100 rounded">
-            {formatJobType(job.jobType)}
-          </span>
-          <span className="px-2 py-1 bg-gray-100 rounded">
-            {formatExperienceLevel(job.experienceLevel)}
-          </span>
-          {salary && (
-            <span className="font-medium text-gray-900">
-              💰 {salary}
-            </span>
-          )}
-        </div>
-
-        {/* Description Preview */}
-        <p className="text-gray-600 text-sm mb-4 line-clamp-2">
-          {stripHtml(job.description)}
-        </p>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-          <div className="flex items-center gap-3 text-sm text-gray-500">
-            <span>{posted_ago}</span>
-            {job.applicationCount !== undefined && job.applicationCount > 0 && (
-              <span>• {job.applicationCount} applicants</span>
+        <div className="relative z-10">
+          {/* Header with Featured Badge */}
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex-1">
+              <h3 className="text-xl font-black text-slate-900 mb-1 group-hover:text-blue-600 transition-colors leading-tight">
+                {job.title}
+              </h3>
+              <div className="flex items-center text-slate-500 font-bold text-sm">
+                <Building2 className="w-3.5 h-3.5 mr-2 text-slate-400 group-hover:text-blue-500 transition-colors" />
+                {job.company}
+              </div>
+            </div>
+            {job.featured && (
+              <span className="ml-4 px-3 py-1 bg-amber-50 text-amber-600 text-[10px] font-black uppercase tracking-widest border border-amber-100 rounded-lg flex items-center shadow-sm">
+                <Star className="w-3 h-3 mr-1 fill-amber-500 text-amber-500" />
+                Featured
+              </span>
             )}
-            <span className={`px-2 py-1 text-xs font-medium rounded ${qualityBadge.color}`}>
+          </div>
+
+          {/* Location and Metadata Grid */}
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            <div className="flex items-center text-slate-500 text-sm font-bold truncate">
+              <MapPin className="w-3.5 h-3.5 mr-2 text-blue-500 flex-shrink-0" />
+              <span className="truncate">{job.location}</span>
+              {job.remote && (
+                <span className="ml-2 px-1.5 py-0.5 bg-emerald-50 text-emerald-600 text-[9px] rounded font-black border border-emerald-100">REMOTE</span>
+              )}
+            </div>
+            <div className="flex items-center text-slate-500 text-sm font-bold truncate">
+              <Briefcase className="w-3.5 h-3.5 mr-2 text-indigo-500 flex-shrink-0" />
+              <span className="capitalize truncate">{job.jobType.replace('_', ' ')}</span>
+            </div>
+          </div>
+
+          {/* Salary and Quality */}
+          <div className="flex items-center gap-3 mb-5 flex-wrap">
+            {salary && (
+              <span className="inline-flex items-center px-3 py-1.5 bg-slate-50 text-slate-700 text-xs font-black rounded-xl border border-slate-100 group-hover:bg-white group-hover:border-amber-100 transition-all">
+                <Coins className="w-3.5 h-3.5 mr-2 text-amber-500" />
+                {salary}
+              </span>
+            )}
+            <span className={`inline-flex items-center px-3 py-1.5 text-xs font-black rounded-xl border ${qualityBadge.color} transition-all`}>
+              <Target className="w-3.5 h-3.5 mr-2" />
               {qualityBadge.text}
             </span>
           </div>
-          {job.sourceType !== 'direct' && job.sourcePlatform && (
-            <span className="text-xs text-gray-400">
-              via {job.sourcePlatform}
-            </span>
-          )}
+
+          {/* Description Preview */}
+          <p className="text-slate-500 text-sm mb-6 line-clamp-2 leading-relaxed italic">
+            {stripHtml(job.description) || "No description provided."}
+          </p>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-5 border-t border-slate-50 italic">
+            <div className="flex items-center gap-4 text-[11px] font-bold text-slate-400">
+              <span className="flex items-center"><Eye className="w-3 h-3 mr-1" /> {job.viewCount} views</span>
+              <span className="flex items-center"><Users className="w-3 h-3 mr-1" /> {job.applicationCount || 0} applicants</span>
+              <span>•</span>
+              <span className="text-blue-500/70">{posted_ago}</span>
+            </div>
+            {job.sourceType !== 'direct' && job.sourcePlatform && (
+              <span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">
+                via {job.sourcePlatform}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </Link>
