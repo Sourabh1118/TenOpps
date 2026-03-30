@@ -1053,8 +1053,22 @@ class LinkedInScraper(BaseScraper):
                     logger.debug(f"Error parsing individual LinkedIn job card: {e}")
                     continue
             
-            logger.info(f"Successfully extracted {len(jobs)} jobs from LinkedIn HTML")
-            return jobs
+            logger.info(f"Successfully extracted {len(jobs)} jobs from LinkedIn HTML. Fetching descriptions for the first 15.")
+            
+            # Fetch full descriptions for discovered jobs (Limit to 15 for performance)
+            detailed_jobs = []
+            for job in jobs[:15]:
+                try:
+                    await self.wait_for_rate_limit()
+                    description = await self._parse_job_page(job['link'])
+                    if description:
+                        job['description'] = description
+                    detailed_jobs.append(job)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch description for LinkedIn job {job['link']}: {e}")
+                    detailed_jobs.append(job)
+            
+            return detailed_jobs
             
         except requests.RequestException as e:
             error_msg = f"Failed to fetch LinkedIn search page: {e}"
@@ -1126,6 +1140,63 @@ class LinkedInScraper(BaseScraper):
         
         return 'Mid Level'
     
+    async def _parse_job_page(self, url: str) -> Optional[str]:
+        """
+        Fetch and parse a LinkedIn job detail page to extract the full description.
+        
+        Args:
+            url: LinkedIn job detail URL
+            
+        Returns:
+            Full job description in HTML format, or None if extraction fails
+        """
+        try:
+            # Use Scrape.do with rendering for best reliability on LinkedIn detail pages
+            logger.info(f"Fetching LinkedIn detail page: {url}")
+            html = await self._get_page_content(url, render=True, provider=ScrapingProvider.SCRAPE_DO)
+            
+            if not html:
+                logger.warning(f"Could not fetch content for LinkedIn job detail: {url}")
+                return None
+                
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # 1. Try LD+JSON (Most reliable for full content)
+            import json
+            for script in soup.find_all('script', type='application/ld+json'):
+                try:
+                    data = json.loads(script.string)
+                    # LinkedIn guest view often has an array or a single object
+                    ld = data if isinstance(data, dict) else (data[0] if isinstance(data, list) and data else {})
+                    
+                    if ld.get('@type') == 'JobPosting' and ld.get('description'):
+                        desc = ld.get('description')
+                        # Sometimes it's a list or needs cleanup
+                        if isinstance(desc, list): desc = " ".join(desc)
+                        logger.info(f"Extracted LinkedIn description via LD+JSON for {url}")
+                        return desc
+                except Exception as e:
+                    logger.debug(f"Error parsing LD+JSON on LinkedIn page {url}: {e}")
+                    continue
+            
+            # 2. Fallback: CSS Selector
+            # div.show-more-less-html__markup is the standard for LinkedIn guest view
+            desc_elem = soup.select_one('div.show-more-less-html__markup') or \
+                        soup.select_one('div.description__text') or \
+                        soup.select_one('section.show-more-less-html')
+            
+            if desc_elem:
+                logger.info(f"Extracted LinkedIn description via CSS selector for {url}")
+                # Clean up the output to be decent HTML
+                return str(desc_elem)
+                
+            logger.warning(f"No description found on LinkedIn job page: {url}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to parse LinkedIn job page {url}: {e}")
+            return None
+
     def normalize_job(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Convert LinkedIn HTML format to standard schema.
@@ -1184,7 +1255,7 @@ class LinkedInScraper(BaseScraper):
             'remote': remote,
             'job_type': normalize_job_type(self._extract_job_type(raw_data)),
             'experience_level': normalize_experience_level(self._extract_experience_level(raw_data)),
-            'description': 'Description not available in summary view. Visit source page for details.',
+            'description': raw_data.get('description') or 'Description not available in summary view. Visit source page for details.',
             'requirements': None,
             'responsibilities': None,
             'salary_min': None,

@@ -7,6 +7,9 @@ import { searchApi } from '@/lib/api/search'
 import { SearchBar } from '@/components/jobs/SearchBar'
 import { SearchFilters } from '@/components/jobs/SearchFilters'
 import { JobCard } from '@/components/jobs/JobCard'
+import { JobListingSkeleton } from '@/components/jobs/JobCardSkeleton'
+import { motion } from 'framer-motion'
+import { AnimationWrapper, staggerContainer, staggerItem } from '@/components/ui/AnimationWrapper'
 
 export default function JobsPage() {
   const [filters, setFilters] = useState<SearchFiltersType>({})
@@ -82,36 +85,34 @@ export default function JobsPage() {
             )}
 
             {/* Loading State */}
-            {isLoading && (
-              <div className="space-y-4">
-                {[...Array(5)].map((_, i) => (
-                  <div key={i} className="bg-white border border-gray-200 rounded-lg p-6 animate-pulse">
-                    <div className="h-6 bg-gray-200 rounded w-3/4 mb-4"></div>
-                    <div className="h-4 bg-gray-200 rounded w-1/2 mb-4"></div>
-                    <div className="h-4 bg-gray-200 rounded w-full mb-2"></div>
-                    <div className="h-4 bg-gray-200 rounded w-full"></div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {isLoading && <JobListingSkeleton />}
 
             {/* Error State */}
             {isError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-                <h3 className="text-red-800 font-medium mb-2">Error loading jobs</h3>
-                <p className="text-red-600 text-sm">
-                  {error instanceof Error ? error.message : 'An unexpected error occurred'}
-                </p>
-              </div>
+              <AnimationWrapper variant="fade">
+                <div className="bg-red-50 border border-red-200 rounded-[2rem] p-8 text-center">
+                  <h3 className="text-red-800 font-black text-xl mb-2">Error loading jobs</h3>
+                  <p className="text-red-600 font-medium whitespace-pre-wrap">
+                    {error instanceof Error ? error.message : 'An unexpected error occurred'}
+                  </p>
+                </div>
+              </AnimationWrapper>
             )}
 
             {/* Job Results */}
             {data && data.jobs.length > 0 && (
-              <div className="space-y-4">
+              <motion.div 
+                variants={staggerContainer}
+                initial="hidden"
+                animate="visible"
+                className="grid grid-cols-1 md:grid-cols-2 gap-6"
+              >
                 {data.jobs.map((job) => (
-                  <JobCard key={job.id} job={job} />
+                  <motion.div variants={staggerItem} key={job.id}>
+                    <JobCard job={job} />
+                  </motion.div>
                 ))}
-              </div>
+              </motion.div>
             )}
 
             {/* No Results */}
