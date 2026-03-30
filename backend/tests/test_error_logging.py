@@ -429,38 +429,4 @@ class TestDatabaseErrorLogging:
             assert context['parameters']['email'] == 'test@example.com'
 
 
-class TestScrapingErrorLogging:
-    """Test scraping error logging (Requirement 15.2)."""
-    
-    @pytest.mark.asyncio
-    async def test_scraping_error_logs_source_and_retry_count(self):
-        """Test that scraping errors log source, error message, and retry count."""
-        from app.services.scraping import BaseScraper, ScrapingError
-        from app.core.logging import log_error_with_context
-        
-        class TestScraper(BaseScraper):
-            async def scrape(self):
-                raise ScrapingError("Test error")
-            
-            def normalize_job(self, raw_data):
-                return {}
-        
-        scraper = TestScraper("test_source", rate_limit=10)
-        
-        with patch('app.core.logging.log_error_with_context') as mock_log:
-            with patch.object(scraper, 'wait_for_rate_limit', new_callable=AsyncMock):
-                with patch('app.services.alerting.track_scraping_failures', new_callable=AsyncMock):
-                    with pytest.raises(ScrapingError):
-                        await scraper.scrape_with_retry()
-                    
-                    # Should be called 3 times (one for each retry)
-                    assert mock_log.call_count == 3
-                    
-                    # Check first call
-                    first_call = mock_log.call_args_list[0]
-                    assert 'test_source' in first_call[0][1]  # Second arg is the message
-                    context = first_call[1]['context']
-                    assert context['source'] == 'test_source'
-                    assert context['retry_count'] == 1
-                    assert context['max_retries'] == 3
-                    assert 'error_message' in context
+

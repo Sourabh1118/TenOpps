@@ -299,6 +299,7 @@ from app.api.admin import router as admin_router
 from app.api.analytics import router as analytics_router
 from app.api.stripe_payment import router as stripe_router
 from app.api.privacy import router as privacy_router
+from app.api.scraper import router as scraper_router
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(subscription_router, prefix="/api")
@@ -309,6 +310,7 @@ app.include_router(admin_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")
 app.include_router(stripe_router, prefix="/api")
 app.include_router(privacy_router, prefix="/api")
+app.include_router(scraper_router, prefix="/api")
 
 
 if __name__ == "__main__":

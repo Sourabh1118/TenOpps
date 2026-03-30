@@ -86,27 +86,6 @@ celery_app.conf.update(
             "routing_key": "high_priority",
             "priority": 9,
         },
-        # Scheduled scraping tasks go to default queue
-        "app.tasks.scraping_tasks.scrape_linkedin_jobs": {
-            "queue": "default",
-            "routing_key": "default",
-            "priority": 5,
-        },
-        "app.tasks.scraping_tasks.scrape_indeed_jobs": {
-            "queue": "default",
-            "routing_key": "default",
-            "priority": 5,
-        },
-        "app.tasks.scraping_tasks.scrape_naukri_jobs": {
-            "queue": "default",
-            "routing_key": "default",
-            "priority": 5,
-        },
-        "app.tasks.scraping_tasks.scrape_monster_jobs": {
-            "queue": "default",
-            "routing_key": "default",
-            "priority": 5,
-        },
         # Maintenance tasks go to low priority queue
         "app.tasks.maintenance_tasks.expire_old_jobs": {
             "queue": "low_priority",
@@ -144,46 +123,10 @@ celery_app.conf.update(
     
     # Rate limiting
     task_annotations={
-        "app.tasks.scraping_tasks.scrape_linkedin_jobs": {
-            "rate_limit": "10/m"  # 10 per minute
-        },
-        "app.tasks.scraping_tasks.scrape_indeed_jobs": {
-            "rate_limit": "20/m"  # 20 per minute
-        },
-        "app.tasks.scraping_tasks.scrape_naukri_jobs": {
-            "rate_limit": "5/m"  # 5 per minute
-        },
-        "app.tasks.scraping_tasks.scrape_monster_jobs": {
-            "rate_limit": "5/m"  # 5 per minute
-        },
     },
     
     # Beat schedule for periodic tasks
     beat_schedule={
-        # Scrape LinkedIn jobs every 6 hours
-        "scrape-linkedin-every-6-hours": {
-            "task": "app.tasks.scraping_tasks.scrape_linkedin_jobs",
-            "schedule": crontab(minute=0, hour="*/6"),  # Every 6 hours
-            "options": {"queue": "default", "priority": 5},
-        },
-        # Scrape Indeed jobs every 6 hours (offset by 1 hour)
-        "scrape-indeed-every-6-hours": {
-            "task": "app.tasks.scraping_tasks.scrape_indeed_jobs",
-            "schedule": crontab(minute=0, hour="1,7,13,19"),  # Every 6 hours, offset
-            "options": {"queue": "default", "priority": 5},
-        },
-        # Scrape Naukri jobs every 6 hours (offset by 2 hours)
-        "scrape-naukri-every-6-hours": {
-            "task": "app.tasks.scraping_tasks.scrape_naukri_jobs",
-            "schedule": crontab(minute=0, hour="2,8,14,20"),  # Every 6 hours, offset
-            "options": {"queue": "default", "priority": 5},
-        },
-        # Scrape Monster jobs every 6 hours (offset by 3 hours)
-        "scrape-monster-every-6-hours": {
-            "task": "app.tasks.scraping_tasks.scrape_monster_jobs",
-            "schedule": crontab(minute=0, hour="3,9,15,21"),  # Every 6 hours, offset
-            "options": {"queue": "default", "priority": 5},
-        },
         # Expire old jobs daily at 2 AM
         "expire-old-jobs-daily": {
             "task": "app.tasks.maintenance_tasks.expire_old_jobs",

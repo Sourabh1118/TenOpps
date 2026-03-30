@@ -44,37 +44,21 @@ echo -e "${GREEN}✓ SSH connection successful${NC}\n"
 echo -e "${YELLOW}Step 2: Pulling latest code from GitHub...${NC}"
 ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} "bash -s" << ENDSSH
 set -e
-
-# Navigate to project directory or clone if it doesn't exist
-if [ -d "/home/jobplatform/job-platform" ]; then
-    echo "Pulling latest code tracking to origin/main..."
-    cd /home/jobplatform/job-platform
-    sudo -u jobplatform git config pull.rebase false
-    sudo -u jobplatform git pull origin main
-else
-    echo "Cloning repository..."
-    cd /home/jobplatform
-    sudo -u jobplatform git clone https://${GITHUB_PAT}@github.com/Sourabh1118/TenOpps-Portal.git job-platform
-fi
-
-echo "✓ Code updated"
+echo "Cloning repository to /tmp for deployment orchestration..."
+rm -rf /tmp/job-platform-deploy
+git clone https://${GITHUB_PAT}@github.com/Sourabh1118/TenOpps-Portal.git /tmp/job-platform-deploy
+echo "✓ Code updated in /tmp"
 ENDSSH
 
 echo -e "${GREEN}✓ Code updated on EC2${NC}\n"
 
 echo -e "${YELLOW}Step 3: Fixing migration files...${NC}"
-ssh -i "$SSH_KEY" ubuntu@${EC2_IP} << 'ENDSSH'
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} << 'ENDSSH'
 set -e
-
-cd /home/jobplatform/job-platform
-
-# Make script executable
+cd /tmp/job-platform-deploy
 chmod +x scripts/fix-all-migrations.sh
-
-# Run migration fix
 echo "Fixing migration revision IDs..."
-sudo -u jobplatform bash scripts/fix-all-migrations.sh
-
+bash scripts/fix-all-migrations.sh
 echo "✓ Migrations fixed"
 ENDSSH
 
@@ -84,11 +68,9 @@ echo -e "${YELLOW}Step 4: Running complete deployment...${NC}"
 echo "This will take 10-15 minutes..."
 echo ""
 
-ssh -i "$SSH_KEY" ubuntu@${EC2_IP} << ENDSSH
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} << ENDSSH
 set -e
-
-cd /home/jobplatform/job-platform
-
+cd /tmp/job-platform-deploy
 # Run deployment script
 sudo bash scripts/complete-clean-deploy.sh ${DOMAIN} ${GITHUB_PAT} ${DB_PASSWORD} ${REDIS_PASSWORD}
 
