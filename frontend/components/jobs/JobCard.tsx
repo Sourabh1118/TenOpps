@@ -99,7 +99,7 @@ export function JobCard({ job }: JobCardProps) {
             </div>
             <div className="flex items-center text-slate-500 text-sm font-bold truncate">
               <Briefcase className="w-3.5 h-3.5 mr-2 text-indigo-500 flex-shrink-0" />
-              <span className="capitalize truncate">{job.jobType.replace('_', ' ')}</span>
+              <span className="capitalize truncate">{job.jobType?.replace('_', ' ') || 'N/A'}</span>
             </div>
           </div>
 

@@ -171,7 +171,7 @@ function JobDetailsContent() {
                     </div>
                     <div>
                       <div className="text-xs font-black text-slate-400 uppercase tracking-widest">Type</div>
-                      <div className="font-bold text-slate-700 capitalize">{job.jobType.replace('_', ' ')}</div>
+                      <div className="font-bold text-slate-700 capitalize">{job.jobType?.replace('_', ' ') || 'N/A'}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">

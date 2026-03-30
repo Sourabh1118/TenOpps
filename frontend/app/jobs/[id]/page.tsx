@@ -187,7 +187,7 @@ export default function JobDetailPage() {
                 <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Job Type</span>
                 <div className="flex items-center font-bold text-slate-700 capitalize">
                   <Briefcase className="w-4 h-4 mr-2 text-indigo-500" />
-                  {job.jobType.replace('_', ' ')}
+                  {job.jobType?.replace('_', ' ') || 'N/A'}
                 </div>
               </div>
               <div className="space-y-1">
