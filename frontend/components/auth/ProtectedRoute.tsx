@@ -16,9 +16,12 @@ export function ProtectedRoute({
   redirectTo = '/login' 
 }: ProtectedRouteProps) {
   const router = useRouter()
-  const { isAuthenticated, user } = useAuthStore()
+  const { isAuthenticated, user, _hasHydrated } = useAuthStore()
 
   useEffect(() => {
+    // Wait for hydration before checking auth
+    if (!_hasHydrated) return
+
     // Check if user is authenticated
     if (!isAuthenticated) {
       router.push(redirectTo)
@@ -36,15 +39,15 @@ export function ProtectedRoute({
         router.push('/')
       }
     }
-  }, [isAuthenticated, user, requiredRole, redirectTo, router])
+  }, [isAuthenticated, user, requiredRole, redirectTo, router, _hasHydrated])
 
-  // Don't render children if not authenticated or wrong role
-  if (!isAuthenticated) {
+  // Don't render children if not hydrated, not authenticated, or wrong role
+  if (!_hasHydrated || !isAuthenticated) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Redirecting to login...</p>
+          <p className="text-gray-600">{!_hasHydrated ? 'Loading session...' : 'Redirecting to login...'}</p>
         </div>
       </div>
     )

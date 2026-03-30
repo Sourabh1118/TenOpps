@@ -16,23 +16,26 @@ const navItems = [
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { isAuthenticated, user, clearAuth } = useAuthStore()
+  const { isAuthenticated, user, clearAuth, _hasHydrated } = useAuthStore()
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
+    // Wait for hydration
+    if (!_hasHydrated) return
+
     if (!isAuthenticated || user?.role !== 'admin') {
       router.push('/login')
     } else {
       setChecking(false)
     }
-  }, [isAuthenticated, user, router])
+  }, [isAuthenticated, user, router, _hasHydrated])
 
-  if (checking) {
+  if (checking || !_hasHydrated) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto" />
-          <p className="mt-4 text-gray-600">Checking access...</p>
+          <p className="mt-4 text-gray-600">{!_hasHydrated ? 'Restoring session...' : 'Checking access...'}</p>
         </div>
       </div>
     )
