@@ -204,9 +204,10 @@ export default function JobDetailPage() {
         {/* Job Description */}
         <div className="bg-white shadow rounded-lg p-8 mb-6">
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Job Description</h2>
-          <div className="prose max-w-none text-gray-700 whitespace-pre-wrap">
-            {job.description}
-          </div>
+          <div 
+            className="prose max-w-none text-gray-700"
+            dangerouslySetInnerHTML={{ __html: job.description }}
+          />
         </div>
 
         {/* Requirements */}

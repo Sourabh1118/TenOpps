@@ -38,6 +38,11 @@ export function JobCard({ job }: JobCardProps) {
     return level.charAt(0) + level.slice(1).toLowerCase()
   }
 
+  const stripHtml = (html?: string) => {
+    if (!html) return ''
+    return html.replace(/<[^>]*>?/gm, '')
+  }
+
   const getQualityBadge = () => {
     if (job.qualityScore >= 80) return { text: 'High Quality', color: 'bg-green-100 text-green-800' }
     if (job.qualityScore >= 60) return { text: 'Good', color: 'bg-blue-100 text-blue-800' }
@@ -109,7 +114,7 @@ export function JobCard({ job }: JobCardProps) {
 
         {/* Description Preview */}
         <p className="text-gray-600 text-sm mb-4 line-clamp-2">
-          {job.description}
+          {stripHtml(job.description)}
         </p>
 
         {/* Footer */}

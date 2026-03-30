@@ -255,9 +255,10 @@ function JobDetailsContent() {
         {/* Job Description */}
         <div className="bg-white shadow rounded-lg p-6 md:p-8 mb-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Job Description</h2>
-          <div className="prose max-w-none text-gray-700 whitespace-pre-wrap">
-            {job.description}
-          </div>
+          <div 
+            className="prose max-w-none text-gray-700"
+            dangerouslySetInnerHTML={{ __html: job.description }}
+          />
 
           {job.requirements && job.requirements.length > 0 && (
             <div className="mt-6">
