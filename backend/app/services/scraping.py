@@ -69,7 +69,7 @@ class ProviderTransport:
         
         try:
             if provider == ScrapingProvider.SCRAPE_DO:
-                token = settings.SCRAPE_DO_TOKEN
+                token = api_key or settings.SCRAPE_DO_TOKEN
                 if not token: return ""
                 render_param = "&render=true" if render else ""
                 super_param = "&super=true" if super_proxy else ""
@@ -78,7 +78,7 @@ class ProviderTransport:
                 return response.text if response.status_code == 200 else ""
                 
             elif provider == ScrapingProvider.SCRAPER_API:
-                key = settings.SCRAPER_API_KEY
+                key = api_key or settings.SCRAPER_API_KEY
                 if not key: return ""
                 payload = {'api_key': key, 'url': url, 'render': str(render).lower()}
                 response = requests.get('http://api.scraperapi.com/', params=payload, timeout=60)
@@ -980,15 +980,16 @@ class LinkedInScraper(BaseScraper):
         try:
             logger.info(f"Fetching LinkedIn jobs from: {self.search_url}")
             
-            # Generate randomized browser headers
-            headers = self.get_browser_headers()
+            # Fetch HTML using proxy provider
+            logger.info(f"Fetching LinkedIn search results via {self.preferred_provider}: {self.search_url}")
+            html = await self._get_page_content(self.search_url, render=True, super_proxy=True)
             
-            logger.info(f"Fetching LinkedIn search results: {self.search_url}")
-            response = self.session.get(self.search_url, headers=headers, timeout=30)
-            response.raise_for_status()
-            
+            if not html:
+                logger.error(f"Failed to fetch LinkedIn search page via {self.preferred_provider}")
+                return []
+                
             # Parse HTML
-            soup = BeautifulSoup(response.content, 'html.parser')
+            soup = BeautifulSoup(html, 'html.parser')
             
             # Extract job listings
             # Public guest page uses <li> inside <ul> with specific classes
@@ -1151,9 +1152,9 @@ class LinkedInScraper(BaseScraper):
             Full job description in HTML format, or None if extraction fails
         """
         try:
-            # Use Scrape.do with rendering for best reliability on LinkedIn detail pages
-            logger.info(f"Fetching LinkedIn detail page: {url}")
-            html = await self._get_page_content(url, render=True, provider=ScrapingProvider.SCRAPE_DO)
+            # Use preferred provider with rendering for best reliability on LinkedIn detail pages
+            logger.info(f"Fetching LinkedIn detail page via {self.preferred_provider}: {url}")
+            html = await self._get_page_content(url, render=True, super_proxy=True)
             
             if not html:
                 logger.warning(f"Could not fetch content for LinkedIn job detail: {url}")
