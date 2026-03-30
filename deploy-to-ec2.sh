@@ -8,9 +8,9 @@
 set -e
 
 # Configuration
-EC2_IP="3.110.220.37"
-SSH_KEY="trusanity-pem.pem"
-GITHUB_PAT="YOUR_GITHUB_TOKEN"
+EC2_IP="15.206.62.92"
+SSH_KEY="/home/sourabh/Desktop/TenOpps/Keys/Portal.pem"
+GITHUB_PAT="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"
 DOMAIN="trusanity.com"
 DB_PASSWORD="Herculis@123"
 REDIS_PASSWORD="Herculis@123"
@@ -42,18 +42,19 @@ ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} "echo 'SSH connec
 echo -e "${GREEN}✓ SSH connection successful${NC}\n"
 
 echo -e "${YELLOW}Step 2: Pulling latest code from GitHub...${NC}"
-ssh -i "$SSH_KEY" ubuntu@${EC2_IP} << 'ENDSSH'
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@${EC2_IP} "bash -s" << ENDSSH
 set -e
 
 # Navigate to project directory or clone if it doesn't exist
 if [ -d "/home/jobplatform/job-platform" ]; then
-    echo "Pulling latest code..."
+    echo "Pulling latest code tracking to origin/main..."
     cd /home/jobplatform/job-platform
-    sudo -u jobplatform git pull
+    sudo -u jobplatform git config pull.rebase false
+    sudo -u jobplatform git pull origin main
 else
     echo "Cloning repository..."
     cd /home/jobplatform
-    sudo -u jobplatform git clone https://YOUR_GITHUB_TOKEN@github.com/Sourabh1118/TenOpps.git job-platform
+    sudo -u jobplatform git clone https://${GITHUB_PAT}@github.com/Sourabh1118/TenOpps-Portal.git job-platform
 fi
 
 echo "✓ Code updated"

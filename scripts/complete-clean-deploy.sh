@@ -103,7 +103,7 @@ echo -e "${GREEN}User and directory structure created!${NC}\n"
 echo -e "${YELLOW}Step 3: Cloning repository...${NC}"
 
 cd /home/jobplatform
-sudo -u jobplatform git clone https://${GITHUB_PAT}@github.com/Sourabh1118/TenOpps.git job-platform
+sudo -u jobplatform git clone https://${GITHUB_PAT}@github.com/Sourabh1118/TenOpps-Portal.git job-platform
 
 if [ ! -d "/home/jobplatform/job-platform" ]; then
     echo -e "${RED}Failed to clone repository${NC}"
